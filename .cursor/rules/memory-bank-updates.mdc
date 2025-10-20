@@ -1,0 +1,66 @@
+---
+description: Rules for when and how to update Memory Bank files during development
+---
+
+# Rule: Memory Bank Updates
+
+## When to Update Memory Bank
+
+Update the relevant Memory Bank files when:
+
+1. **Major decisions are made**
+   - Platform/tech stack chosen → `techContext.md`, `activeContext.md`
+   - Architecture patterns established → `systemPatterns.md`
+   - Persona selected → `productContext.md`, `activeContext.md`
+
+2. **Significant progress occurs**
+   - MVP features completed → `progress.md`
+   - New features implemented → `progress.md`
+   - Blockers resolved → `activeContext.md`, `progress.md`
+
+3. **Context changes**
+   - Work focus shifts → `activeContext.md`
+   - New patterns discovered → `systemPatterns.md`
+   - Dependencies added → `techContext.md`
+
+4. **Session boundaries**
+   - Before ending a work session → Update `activeContext.md` with next steps
+   - After completing milestones → Update `progress.md`
+
+## How to Update
+
+**Keep It Minimal**:
+- Only add information that's actually decided or implemented
+- Remove speculation and "to be determined" items once decided
+- Don't document every detail - focus on what's needed to resume work
+- Prefer bullet points over paragraphs
+
+**Update Atomically**:
+- Update only the files that need changes
+- Don't rewrite entire files for small updates
+- Use the `search_replace` tool for targeted updates
+
+**Trigger Phrases**:
+When user says:
+- "Update memory bank" → Review all files, update what's changed
+- "What's our status?" → Check `progress.md` and `activeContext.md`
+- "What have we decided?" → Check `activeContext.md` and `techContext.md`
+
+## What NOT to Document
+
+- Detailed how-to guides (use code comments instead)
+- Every possible option (only document chosen approach)
+- Exhaustive checklists before work starts
+- Speculative future plans
+- Information readily available in code
+
+## File-Specific Guidelines
+
+- `projectbrief.md`: Rarely changes - only update if core goals shift
+- `productContext.md`: Rarely changes - update when persona chosen
+- `activeContext.md`: Updates frequently - current focus and next steps
+- `systemPatterns.md`: Updates as patterns emerge - not before
+- `techContext.md`: Updates when stack decisions made
+- `progress.md`: Updates with each completed feature or milestone
+
+**Golden Rule**: If you haven't built it or decided it yet, don't document it in detail.
