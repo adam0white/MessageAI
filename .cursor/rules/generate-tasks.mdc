@@ -1,8 +1,7 @@
 ---
 description: Guide for creating detailed task lists from Product Requirements Documents (PRDs)
-globs: **/tasks/**/*.md, **/tasks-*.md
+alwaysApply: false
 ---
-
 # Rule: Generating a Task List from a PRD
 
 // Description: Guide for creating detailed task lists from Product Requirements Documents (PRDs)

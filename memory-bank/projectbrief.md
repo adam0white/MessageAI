@@ -28,3 +28,11 @@ A production-quality messaging app (like WhatsApp) with AI-enhanced features in 
 *"Simple + reliable + useful AI > feature-rich + flaky"*
 
 Messages must never be lost. Everything else is secondary.
+
+## Development Principles
+- **Specify what and why, not how** - Trust implementation decisions, focus on outcomes
+- **Working state is sacred** - Every commit must be deployable; test before committing
+- **Debug deeply** - Understand the problem before fixing; read errors completely
+- **Consult latest docs** - Platforms evolve; check documentation when stuck
+- **Clean as you go** - Delete scaffolding docs when done; keep only what's useful
+- **Know when to stop** - Document blockers instead of spinning on impossible tasks

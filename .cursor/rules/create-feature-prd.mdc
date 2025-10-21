@@ -1,8 +1,7 @@
 ---
-description: Guide for generating a detailed Product Requirements Document (PRD) based on user prompts
-globs: **/tasks/**/*.md, **/prd-*.md
+description: Guide for generating a detailed Product Requirements Document (PRD)
+alwaysApply: false
 ---
-
 # Rule: Generating a Product Requirements Document (PRD)
 
 // Description: Guide for generating a detailed Product Requirements Document (PRD) based on user prompts

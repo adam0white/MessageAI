@@ -1,0 +1,71 @@
+---
+description: Development practices and quality standards
+alwaysApply: false
+---
+# Rule: Development Practices
+
+## Code Quality Standards
+
+### Working State is Sacred
+- Every commit must leave the app in a deployable, working state
+- Test after each logical change, not just at the end
+- Broken core functionality is never acceptable
+
+### Debugging Philosophy
+- **Debug deeply, not desperately** - Understand before fixing
+- Read stack traces completely
+- Add strategic logging to understand data flow
+- Consult the latest documentation frequently
+- Surface errors explicitly with clear messages
+- If stuck after thorough investigation, document findings and ask for help
+- Never do blind "shotgun debugging" (changing 10 things hoping one works)
+
+### Documentation Lifecycle
+Working documents are scaffolding - delete them when done:
+- **Keep**: README, ARCHITECTURE, requirements
+- **Delete when done, avoid new creations where possible**: Task lists, PRDs, audits, feature gap analyses
+
+### Testing Standards
+- Tests aren't afterthoughts - they prove features work
+- Test critical paths and catch regressions
+- Delete infeasible tests rather than leaving them disabled
+- Goal: confidence, not 100% coverage
+
+## How to Work
+
+### Specification Over Prescription
+- Prompts should specify **what** and **why**, not **how**
+- Avoid code snippets and prescriptive implementation steps in requirements
+- Point to documentation and describe problems deeply
+- Trust the implementation - don't handcuff with specific patterns
+- Exception: When debugging specific issues, more detail helps
+
+### Documentation and Research
+- Consult the latest documentation for libraries/platforms being used
+- Platforms evolve - function signatures change, APIs get added
+- Read context fully before starting (architecture, existing code, platform docs)
+
+### Know When to Stop
+- Some bugs aren't fixable in current architecture
+- Some features need more time than available
+- After thorough effort, it's okay to stop and document findings (concisely!)
+- Perfect is the enemy of shipped
+
+## Quality Checklist
+
+Before considering work complete:
+- [ ] App runs without errors
+- [ ] Core functionality works as expected
+- [ ] Changes are tested (or asked to be tested manually)
+- [ ] No broken features introduced
+- [ ] Errors are surfaced clearly
+- [ ] Code is clean and readable
+
+## When Things Go Wrong
+
+1. **Stop** - Don't continue breaking things
+2. **Understand** - Read errors, add logging, reproduce
+3. **Research** - Check latest docs, look for similar issues
+4. **Fix** - Make targeted changes based on understanding
+5. **Test** - Verify the fix actually works
+6. **Document** - If it was tricky, concisely note down what you learned into the existing documents if applicable
