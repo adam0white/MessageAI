@@ -67,6 +67,7 @@ Simple JSON messages over WebSocket:
 - `new_message` - Server pushes new message to clients
 - `message_read` - Server pushes read receipt updates
 - `presence_update` - Server pushes online/offline status
+- `connected` - Server confirms WebSocket connection
 
 ### State Management Pattern
 - **React Query**: Server state (messages from DOs, users from D1)
@@ -78,6 +79,103 @@ Simple JSON messages over WebSocket:
 - **N participants**: DO manages N WebSocket connections
 - **Attribution**: Each message includes sender ID
 - **Read receipts**: Track per-user, per-message in DO SQLite
+
+## Database Best Practices
+
+### D1 (Production - Cloudflare)
+- ✅ Using prepared statements with parameter binding (SQL injection protection)
+- ✅ Proper error handling with D1_ERROR catching
+- ✅ Foreign key constraints enforced
+- ✅ Migrations tracked in `/worker/src/db/migrations/`
+- ✅ Run migrations: `wrangler d1 execute messageai-db --remote --file=<migration>`
+
+### Durable Object SQLite
+- ✅ Using `new_sqlite_classes` in migrations for SQL support
+- ✅ Initialized on first request with CREATE TABLE IF NOT EXISTS
+- ✅ Indexes for query performance (conversation_id, created_at)
+- ✅ Type-safe with TypeScript interfaces
+
+### Expo SQLite (Frontend)
+- ✅ Using SQLiteProvider pattern (latest Expo SDK 54 approach)
+- ✅ Async API with `useSQLiteContext()` hook
+- ✅ Database initialized via `onInit` callback
+- ✅ Type-safe queries with TypeScript
+- ✅ Foreign key constraints enabled: `PRAGMA foreign_keys = ON`
+
+## Current Implementation Status
+
+### ✅ Working (Phase 2.0 Complete)
+- User authentication (Clerk)
+- Conversation creation with deterministic IDs
+- WebSocket real-time connection (wss://)
+- Message sending with optimistic UI
+- Message persistence (both DO SQLite and local SQLite)
+- Auto-reconnection with exponential backoff
+- Network monitoring
+- Deployed to Cloudflare Workers
+- **Real-time messaging when both users have chat open**
+- Status indicators (○ → ✓)
+- Conversation list auto-refresh (5s polling)
+- Two-person chat working end-to-end
+
+### 🏗️ Architecture Decisions for Future Phases
+
+**Deterministic Conversation IDs**
+- Current: `conv_user1_user2` (sorted participant IDs)
+- Problem: Group chats will have very long IDs
+- **TODO Phase 3**: Use SHA-256 hash of sorted participant IDs
+  - Example: `conv_sha256(user1,user2,user3)`
+  - Consistent across all participants
+  - Fixed length regardless of group size
+
+**WebSocket Connection Pattern**
+- Current: One WebSocket per conversation (only when chat screen open)
+- Problem: Can't receive messages from other conversations in background
+- **TODO Phase 4**: 
+  - Option A: Single WebSocket for all user's conversations (subscribe pattern)
+  - Option B: Keep per-conversation WS + add push notifications for background
+  - **Recommended**: Option B (simpler, more scalable, standard pattern)
+
+**Message Sync Strategy**
+- Current: Full conversation list sync every 5 seconds
+- Problem: Inefficient, pulls all data even if nothing changed
+- **TODO Phase 4**: Delta sync architecture
+  - Track `lastSyncedAt` timestamp per user/device
+  - Server endpoint: `GET /api/conversations?userId=xxx&after=timestamp`
+  - Returns only new/updated conversations since timestamp
+  - Reduces bandwidth and database queries
+
+**Historical Message Loading**
+- Current: NOT IMPLEMENTED - new devices don't see old messages
+- **TODO Phase 3**: 
+  - On conversation open, fetch history from Durable Object
+  - Add `GET /conversation/{id}/messages?limit=50&before=messageId`
+  - Implement pagination for older messages
+  - Cache in local SQLite
+
+**Background Message Reception**
+- Current: Only receive messages when chat screen is open
+- **TODO Phase 4 (Push Notifications)**:
+  - Expo push notifications for background messages
+  - Local notification shows message preview
+  - Tapping notification opens chat and loads messages
+  - This is the proper mobile pattern (WhatsApp, Telegram use this)
+
+**WebSocket URL Redundancy**
+- Current: `/conversation/{id}?userId=xxx&conversationId={id}` (conversationId appears twice)
+- **CLEANUP**: Remove conversationId from query params (it's already in path)
+  - Path param is for routing to correct DO
+  - Query param userId is for session tracking
+
+### ⏳ Known Limitations (Deferred to Later Phases)
+- No historical message loading on new devices
+- No delta sync (full refresh each time)
+- Messages not received in background (need push notifications)
+- Deterministic IDs too long for large groups (need hashing)
+- Placeholder users auto-created (need proper Clerk webhook setup)
+- No user search/picker UI
+- Read receipts implemented but UI not showing them clearly
+- Typing indicators implemented but not tested
 
 ## AI Patterns (Post-MVP)
 

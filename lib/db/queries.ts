@@ -75,6 +75,26 @@ export async function upsertConversation(
 	db: SQLite.SQLiteDatabase,
 	conversation: Conversation
 ): Promise<void> {
+	// CRITICAL: Ensure all participants exist as users first to prevent foreign key errors
+	for (const participant of conversation.participants) {
+		// Check if user exists
+		const existingUser = await getUserById(db, participant.userId);
+		if (!existingUser) {
+			// Create placeholder user - will be updated when that user signs in
+			await db.runAsync(
+				`INSERT OR IGNORE INTO users (id, clerk_id, email, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?)`,
+				[
+					participant.userId,
+					participant.userId,
+					`${participant.userId}@placeholder.local`,
+					new Date().toISOString(),
+					new Date().toISOString()
+				]
+			);
+		}
+	}
+
 	await db.runAsync(
 		`INSERT INTO conversations (id, type, name, created_at, updated_at, last_message_at)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -123,7 +143,7 @@ export async function getConversationById(
 	return dbConversationToConversation(conv, participants);
 }
 
-export async function getAllConversations(
+export async function getConversationPreviews(
 	db: SQLite.SQLiteDatabase
 ): Promise<ConversationPreview[]> {
 	const conversations = await db.getAllAsync<DBConversation>(
@@ -161,7 +181,7 @@ export async function getAllConversations(
 				senderId: lastMessage.sender_id,
 				createdAt: lastMessage.created_at
 			} : undefined,
-			unread_count: conv.unread_count || 0,
+			unreadCount: conv.unread_count || 0,
 			participants: participants.map(p => ({
 				id: p.user_id,
 				name: p.name || undefined,
@@ -201,6 +221,22 @@ export async function insertMessage(
 	db: SQLite.SQLiteDatabase,
 	message: Message
 ): Promise<void> {
+	// CRITICAL: Ensure sender exists as user first to prevent foreign key errors
+	const existingUser = await getUserById(db, message.senderId);
+	if (!existingUser) {
+		await db.runAsync(
+			`INSERT OR IGNORE INTO users (id, clerk_id, email, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			[
+				message.senderId,
+				message.senderId,
+				`${message.senderId}@placeholder.local`,
+				new Date().toISOString(),
+				new Date().toISOString()
+			]
+		);
+	}
+
 	await db.runAsync(
 		`INSERT INTO messages (
 			id, conversation_id, sender_id, content, type, status,

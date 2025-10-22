@@ -24,6 +24,16 @@
 		]
 	},
 	/**
+	 * Durable Object Migrations
+	 * Enable SQLite storage for Durable Objects
+	 */
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["Conversation"]
+		}
+	],
+	/**
 	 * D1 Database
 	 * https://developers.cloudflare.com/d1/
 	 */

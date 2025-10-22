@@ -34,21 +34,25 @@
 - `lib/stores/auth.ts` - Zustand store for auth state (userId, isAuthenticated)
 - `lib/stores/network.ts` - Zustand store for network and WebSocket status
 
+### Frontend (Expo App) - Chat & Messaging Created
+- `app/(app)/chat/[id].tsx` - Chat screen with message list, input, send button, real-time updates
+- `app/(app)/index.tsx` - Conversation list with pull-to-refresh and navigation
+- `hooks/useMessages.ts` - React Query hook for optimistic message sending and receiving
+- `hooks/useConversations.ts` - React Query hook for conversation management
+- `hooks/useNetworkMonitor.ts` - Network monitoring and offline sync
+- `components/MessageBubble.tsx` - Message bubble with timestamps and status indicators
+- `lib/api/websocket.ts` - WebSocket client with auto-reconnection, message queue, and type-safe handlers
+
 ### Frontend (Expo App) - To Be Created
-- `app/(app)/chat/[id].tsx` - Chat screen (dynamic route)
 - `app/(app)/new-conversation.tsx` - Create conversation screen
-- `lib/api/websocket.ts` - WebSocket client and connection management
-- `hooks/useMessages.ts` - React Query hook for message state
-- `hooks/useConversations.ts` - React Query hook for conversation state
-- `components/MessageBubble.tsx` - Individual message component
-- `components/ConversationListItem.tsx` - Conversation preview component
+- `components/ConversationListItem.tsx` - Conversation preview component (using inline for now)
 
 ### Backend (Cloudflare Workers) - Created
 - `worker/wrangler.jsonc` - Cloudflare configuration with Durable Objects and D1 bindings
 - `worker/package.json` - Worker dependencies (Wrangler 4.43, TypeScript 5.9)
 - `worker/tsconfig.json` - TypeScript configuration for Workers
 - `worker/src/index.ts` - Main Worker entry point with conversation routing
-- `worker/src/durable-objects/Conversation.ts` - Durable Object skeleton (WebSocket handlers)
+- `worker/src/durable-objects/Conversation.ts` - Durable Object with WebSocket support, in-memory session tracking, broadcast helpers
 - `worker/worker-configuration.d.ts` - Auto-generated Cloudflare types
 
 ### Backend (Cloudflare Workers) - Database Created
@@ -58,12 +62,13 @@
 
 ### Backend (Cloudflare Workers) - Handlers Created
 - `worker/src/handlers/auth.ts` - Clerk webhook handler (user.created, user.updated events)
+- `worker/src/handlers/conversations.ts` - Conversation CRUD endpoints (create, list, get by ID)
 
 ### Backend (Cloudflare Workers) - To Be Created
 - `worker/src/handlers/notifications.ts` - Push notification sender
 
 ### Shared - Created
-- `shared/types.ts` - Complete type definitions (User, Message, Conversation, WebSocket protocol)
+- `shared/types.ts` - Complete type definitions (User, Message, Conversation, WebSocket protocol with ConnectedEvent)
 - `lib/api/types.ts` - Frontend re-exports with frontend-specific types
 - `worker/src/types/index.ts` - Backend re-exports with backend-specific types
 
@@ -99,20 +104,25 @@
   - [x] 1.9 Build basic UI screens: conversation list skeleton with navigation, protected routes using Clerk
     - **✓ TEST:** Navigate between screens, verify protected routes redirect to sign-in when logged out
 
-- [ ] **2.0 Real-Time Messaging Infrastructure**
-  - [ ] 2.1 Create Durable Object class for Conversation with WebSocket accept handler and in-memory connection tracking
-    - **✓ TEST:** Deploy Worker, test WebSocket connection with a WebSocket client tool (wscat or Postman)
-  - [ ] 2.2 Implement WebSocket upgrade endpoint in Worker that routes to correct Durable Object by conversation ID
-  - [ ] 2.3 Build WebSocket client module in Expo (`lib/api/websocket.ts`) with connection, reconnection, and message handling
-  - [ ] 2.4 Implement SQLite storage in Durable Object for messages with schema and basic CRUD operations
-  - [ ] 2.5 Create message sending flow: optimistic SQLite write → UI update → WebSocket send → server confirmation → status update
-  - [ ] 2.6 Implement message receiving: WebSocket listener → SQLite write → React Query cache invalidation → UI update
-  - [ ] 2.7 Build chat screen UI with message list (FlatList), input field, send button, and timestamp display
-    - **✓ TEST:** Send message, see it appear in UI with timestamp, force-quit app, reopen, verify message persisted
-  - [ ] 2.8 Implement offline detection (expo-network), queue messages locally, and sync on reconnection
-    - **✓ TEST:** Enable airplane mode, send message, disable airplane mode, verify message syncs to server
-  - [ ] 2.9 Add conversation metadata endpoints: create conversation, list conversations, fetch conversation details from D1
-    - **✓ TEST:** Create new conversation, see it in list, open it, send first message between two devices in real-time
+- [x] **2.0 Real-Time Messaging Infrastructure** ✅ COMPLETE
+  - [x] 2.1 Create Durable Object class for Conversation with WebSocket accept handler and in-memory connection tracking
+    - **✅ TESTED:** Postman WebSocket connected successfully, hibernation API working
+  - [x] 2.2 Implement WebSocket upgrade endpoint in Worker that routes to correct Durable Object by conversation ID
+  - [x] 2.3 Build WebSocket client module in Expo (`lib/api/websocket.ts`) with connection, reconnection, and message handling
+    - **✅ ENHANCED:** Added connection event callbacks (onConnected, onReconnected, onDisconnected)
+    - **✅ ENHANCED:** Added force reconnection method for network recovery
+  - [x] 2.4 Implement SQLite storage in Durable Object for messages with schema and basic CRUD operations
+  - [x] 2.5 Create message sending flow: optimistic SQLite write → UI update → WebSocket send → server confirmation → status update
+  - [x] 2.6 Implement message receiving: WebSocket listener → SQLite write → React Query cache invalidation → UI update
+  - [x] 2.7 Build chat screen UI with message list (FlatList), input field, send button, and timestamp display
+    - **✅ TESTED:** Messages persist after force-quit, UI displays correctly
+  - [x] 2.8 Implement offline detection (expo-network), queue messages locally, and sync on reconnection
+    - **✅ FIXED:** Network monitor now triggers WebSocket reconnection when network returns
+    - **✅ FIXED:** Offline messages sync automatically after successful reconnection
+    - **✅ TESTED:** Messages sent while offline queue and sync when network returns
+  - [x] 2.9 Add conversation metadata endpoints: create conversation, list conversations, fetch conversation details from D1
+    - **✅ FIXED:** History now requested on every reconnection (catches missed messages)
+    - **✅ TESTED:** REST endpoints working (POST /api/conversations, GET /api/conversations?userId=X, GET /api/conversations/:id)
 
 - [ ] **3.0 Group Chat & Advanced Messaging Features**
   - [ ] 3.1 Extend Durable Object to handle N participants (track multiple WebSocket connections, broadcast to all)
@@ -148,5 +158,27 @@
 
 ---
 
-**Status:** MVP sub-tasks generated. Post-MVP tasks remain high-level.
+**Status:** Phase 2.0 Complete! ✅ 
 
+**Recent Fixes (Oct 21, 2025 - FINAL):**
+- ✅ Enhanced WebSocket client with connection event callbacks
+- ✅ Network monitor triggers automatic reconnection when network returns
+- ✅ Offline messages sync automatically after reconnection
+- ✅ Message history fetched on every reconnection (catches missed messages)
+- ✅ Fixed duplicate message sending (cleared WebSocket queue before SQLite sync)
+- ✅ Fixed duplicate messages in UI (removed invalidateQueries after cache updates)
+- ✅ Reduced WebSocket error spam while offline (errors only logged on initial failure)
+- ✅ Silenced "Failed to fetch conversations" errors when offline
+- ✅ Tested real-time messaging between Android and iPhone devices
+- ✅ Deterministic conversation IDs prevent duplicate chats
+
+**Testing Results (Verified on Real Devices):**
+- ✅ Messages sent while offline queue and sync when network returns
+- ✅ Message status updates correctly after reconnection  
+- ✅ History auto-pulls on reopening chat
+- ✅ No duplicate messages in backend logs
+- ✅ No duplicate messages in UI
+- ✅ Clean error handling when offline
+
+**Known Limitations (to be addressed in Phase 4):**
+- Messages only received when chat is open (background messages require push notifications)

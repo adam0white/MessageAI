@@ -154,6 +154,7 @@ export interface TypingMessage {
  * Server -> Client Messages
  */
 export type ServerMessage =
+	| ConnectedEvent
 	| NewMessageEvent
 	| MessageStatusEvent
 	| MessageReadEvent
@@ -162,6 +163,11 @@ export type ServerMessage =
 	| HistoryResponseEvent
 	| ErrorEvent
 	| AckEvent;
+
+export interface ConnectedEvent {
+	type: 'connected';
+	timestamp: string;
+}
 
 export interface NewMessageEvent {
 	type: 'new_message';
@@ -295,6 +301,8 @@ export interface DBMessage {
 	media_size: number | null;
 	created_at: string;
 	updated_at: string;
+	client_id: string | null;
+	local_only: number; // SQLite boolean (0 or 1)
 }
 
 export interface DBReadReceipt {

@@ -121,8 +121,41 @@ export async function createConversation(
 		participantIds: string[];
 	}
 ): Promise<Conversation> {
-	const id = crypto.randomUUID();
+	// Generate deterministic ID based on sorted participant IDs
+	// This prevents creating duplicate conversations with same participants
+	const sortedParticipants = [...conversation.participantIds].sort();
+	const id = `conv_${sortedParticipants.join('_')}`;
 	const now = new Date().toISOString();
+
+	// Check if conversation already exists
+	const existing = await getConversationById(db, id);
+	if (existing) {
+		console.log(`Conversation ${id} already exists, returning existing`);
+		return existing;
+	}
+
+	// Ensure all participants exist in the users table
+	// If they don't, create placeholder users (they'll be updated by Clerk webhook later)
+	for (const participantId of conversation.participantIds) {
+		const existingUser = await getUserById(db, participantId);
+		if (!existingUser) {
+			console.log(`User ${participantId} not found in D1, creating placeholder`);
+			// Create a placeholder user - will be updated by Clerk webhook
+			await db
+				.prepare(
+					`INSERT OR IGNORE INTO users (id, clerk_id, email, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?)`
+				)
+				.bind(
+					participantId,
+					participantId, // Use same ID as clerk_id for now
+					`${participantId}@placeholder.local`,
+					now,
+					now
+				)
+				.run();
+		}
+	}
 
 	// Insert conversation
 	await db
@@ -241,6 +274,9 @@ export async function getConversationsByUserId(
 
 	return conversations;
 }
+
+// Alias for consistency with API naming
+export const getConversations = getConversationsByUserId;
 
 export async function updateConversationLastMessage(
 	db: D1Database,
