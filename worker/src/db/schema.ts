@@ -121,10 +121,12 @@ export async function createConversation(
 		participantIds: string[];
 	}
 ): Promise<Conversation> {
-	// Generate deterministic ID based on sorted participant IDs
+	// Import the shared utility for generating deterministic conversation IDs
+	const { generateConversationId } = await import('../../../shared/utils');
+	
+	// Generate deterministic ID using SHA-256 for groups (3+), simple concat for 1-2
 	// This prevents creating duplicate conversations with same participants
-	const sortedParticipants = [...conversation.participantIds].sort();
-	const id = `conv_${sortedParticipants.join('_')}`;
+	const id = await generateConversationId(conversation.participantIds);
 	const now = new Date().toISOString();
 
 	// Check if conversation already exists

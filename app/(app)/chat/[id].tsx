@@ -20,6 +20,8 @@ import {
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { MessageBubble } from '../../../components/MessageBubble';
 import { useMessages } from '../../../hooks/useMessages';
+import { useConversation } from '../../../hooks/useConversations';
+import { usePresence } from '../../../hooks/usePresence';
 import { wsClient } from '../../../lib/api/websocket';
 import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
@@ -35,6 +37,11 @@ export default function ChatScreen() {
 	const flatListRef = useRef<FlatList>(null);
 	
 	const { messages, isLoading, sendMessage, isSending, refetch } = useMessages(conversationId);
+	const { conversation } = useConversation(conversationId);
+	const { onlineUserIds, onlineCount } = usePresence(conversationId);
+	
+	// Determine if this is a group chat (3+ participants)
+	const isGroupChat = conversation ? conversation.participants.length >= 3 : false;
 
 	// Connect to WebSocket when screen mounts
 	useEffect(() => {
@@ -85,15 +92,58 @@ export default function ChatScreen() {
 		);
 	};
 
+	// Get conversation name for header
+	const getHeaderTitle = () => {
+		if (!conversation) return 'Chat';
+		
+		if (isGroupChat && conversation.name) {
+			return conversation.name;
+		}
+		
+		if (isGroupChat) {
+			return `Group (${conversation.participants.length})`;
+		}
+		
+		// For 1-on-1, show the other user's name
+		const otherParticipant = conversation.participants.find(p => p.userId !== userId);
+		if (otherParticipant && otherParticipant.user) {
+			return otherParticipant.user.name || otherParticipant.user.email.split('@')[0];
+		}
+		
+		return 'Chat';
+	};
+
+	// Check if recipient is online (for 1-on-1 chats)
+	const isRecipientOnline = () => {
+		if (isGroupChat) return false; // Use online count for groups
+		
+		// For 1-on-1, check if the other user is online
+		const otherParticipant = conversation?.participants.find(p => p.userId !== userId);
+		if (!otherParticipant) return false;
+		
+		return onlineUserIds.includes(otherParticipant.userId);
+	};
+
 	return (
 		<>
 			<Stack.Screen 
 				options={{
-					title: 'Chat',
+					title: getHeaderTitle(),
 					headerRight: () => (
 						<View style={styles.headerRight}>
-							{wsStatus === 'connected' && (
-								<View style={styles.onlineIndicator} />
+							{isGroupChat ? (
+								// For groups: show online count
+								wsStatus === 'connected' && onlineCount > 0 && (
+									<>
+										<View style={styles.onlineIndicator} />
+										<Text style={styles.onlineCount}>{onlineCount} online</Text>
+									</>
+								)
+							) : (
+								// For 1-on-1: show green only if recipient is online
+								isRecipientOnline() && (
+									<View style={styles.onlineIndicator} />
+								)
 							)}
 						</View>
 					),
@@ -115,7 +165,12 @@ export default function ChatScreen() {
 							ref={flatListRef}
 							data={messages}
 							keyExtractor={(item) => item.id}
-							renderItem={({ item }) => <MessageBubble message={item} />}
+							renderItem={({ item }) => (
+								<MessageBubble 
+									message={item} 
+									isGroupChat={isGroupChat}
+								/>
+							)}
 							contentContainerStyle={messages.length === 0 ? styles.emptyMessageList : styles.messageList}
 							onContentSizeChange={() => {
 								// Auto-scroll to bottom when content changes
@@ -256,12 +311,20 @@ const styles = StyleSheet.create({
 	},
 	headerRight: {
 		marginRight: 12,
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 6,
 	},
 	onlineIndicator: {
 		width: 12,
 		height: 12,
 		borderRadius: 6,
 		backgroundColor: '#44b700',
+	},
+	onlineCount: {
+		fontSize: 12,
+		color: '#65676b',
+		fontWeight: '500',
 	},
 });
 

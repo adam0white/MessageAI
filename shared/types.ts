@@ -167,6 +167,7 @@ export type ServerMessage =
 export interface ConnectedEvent {
 	type: 'connected';
 	timestamp: string;
+	onlineUserIds?: string[]; // List of currently online user IDs
 }
 
 export interface NewMessageEvent {

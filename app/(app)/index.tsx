@@ -7,22 +7,34 @@
 import React, { useState } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useRouter, Stack } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, TextInput, Platform } from 'react-native';
 import { useConversations, useCreateConversation } from '../../hooks/useConversations';
 import type { ConversationPreview } from '../../lib/api/types';
 import { useAuthStore } from '../../lib/stores/auth';
+import { clearAllData } from '../../lib/db/queries';
 
 export default function ConversationListScreen() {
 	const { signOut } = useAuth();
 	const { user } = useUser();
 	const router = useRouter();
+	const db = useSQLiteContext();
 	const { userId } = useAuthStore();
 	const { conversations, isLoading, refetch } = useConversations();
 	const { createConversationAsync, isCreating } = useCreateConversation();
 	const [showUserIdModal, setShowUserIdModal] = useState(false);
-	const [otherUserId, setOtherUserId] = useState('');
+	const [conversationName, setConversationName] = useState('');
+	const [participantIds, setParticipantIds] = useState<string>(''); // Comma-separated user IDs
 
 	async function handleSignOut() {
+		try {
+			// Clear local database before signing out
+			await clearAllData(db);
+			console.log('✅ Database cleared on logout');
+		} catch (error) {
+			console.error('⚠️ Failed to clear database on logout:', error);
+		}
+		
 		await signOut();
 		router.replace('/auth/sign-in');
 	}
@@ -48,7 +60,15 @@ export default function ConversationListScreen() {
 	}
 
 	function getConversationName(conv: ConversationPreview): string {
-		if (conv.name) return conv.name;
+		// For group chats, always use the group name
+		if (conv.type === 'group' && conv.name) {
+			return conv.name;
+		}
+		
+		// For groups without a name, show participant count
+		if (conv.type === 'group') {
+			return `Group (${conv.participants.length} members)`;
+		}
 		
 		// For self-chat (only one participant), show "You (Notes)"
 		if (conv.participants.length === 1) {
@@ -69,53 +89,45 @@ export default function ConversationListScreen() {
 		setShowUserIdModal(true);
 	}
 
-	async function createSelfChat() {
-		console.log('🆕 Creating self-chat, userId:', userId);
-		
+	async function createConversation() {
 		if (!userId) {
 			Alert.alert('Error', 'User not authenticated');
 			return;
 		}
 
-		try {
-			const conversation = await createConversationAsync({
-				type: 'direct',
-				participantIds: [userId],
-			});
+		// Parse participant IDs from comma-separated string
+		const trimmedParticipantIds = participantIds.trim();
+		const parsedParticipantIds = trimmedParticipantIds
+			? trimmedParticipantIds.split(',').map(id => id.trim()).filter(id => id.length > 0)
+			: [];
 
-			console.log('✅ Self-chat created, navigating to:', conversation.id);
-			setShowUserIdModal(false);
-			router.push(`/chat/${conversation.id}`);
-		} catch (error) {
-			console.error('❌ Failed to create conversation:', error);
-			Alert.alert('Error', 'Failed to create conversation: ' + (error instanceof Error ? error.message : 'Unknown'));
-		}
-	}
+		// Build participant list (always include current user)
+		const allParticipants = [userId, ...parsedParticipantIds];
 
-	async function createChatWithUser() {
-		const trimmedUserId = otherUserId.trim();
-		
-		if (!userId) {
-			Alert.alert('Error', 'User not authenticated');
-			return;
-		}
+		// Determine conversation type based on participant count
+		// 1 participant = self-chat
+		// 2 participants = direct chat
+		// 3+ participants = group chat
+		const conversationType: 'direct' | 'group' = allParticipants.length >= 3 ? 'group' : 'direct';
+		const trimmedName = conversationName.trim();
 
-		if (!trimmedUserId) {
-			Alert.alert('Error', 'Please enter a user ID');
-			return;
-		}
-
-		console.log('🆕 Creating chat between:', userId, 'and', trimmedUserId);
+		console.log('🆕 Creating conversation:', {
+			type: conversationType,
+			participants: allParticipants,
+			name: trimmedName || '(no name)',
+		});
 
 		try {
 			const conversation = await createConversationAsync({
-				type: 'direct',
-				participantIds: [userId, trimmedUserId],
+				type: conversationType,
+				participantIds: allParticipants,
+				name: trimmedName || undefined,
 			});
 
-			console.log('✅ Two-person chat created, navigating to:', conversation.id);
+			console.log('✅ Conversation created, navigating to:', conversation.id);
 			setShowUserIdModal(false);
-			setOtherUserId('');
+			setConversationName('');
+			setParticipantIds('');
 			router.push(`/chat/${conversation.id}`);
 		} catch (error) {
 			console.error('❌ Failed to create conversation:', error);
@@ -231,53 +243,56 @@ export default function ConversationListScreen() {
 						activeOpacity={1}
 						onPress={(e) => e.stopPropagation()}
 					>
-						<Text style={styles.modalTitle}>New Conversation</Text>
-						
-						<Text style={styles.modalLabel}>Your User ID:</Text>
-						<Text style={styles.userIdText} selectable>{userId}</Text>
-						
-						<Text style={styles.modalLabel}>Chat with another user:</Text>
-						<TextInput
-							style={styles.modalInput}
-							value={otherUserId}
-							onChangeText={setOtherUserId}
-							placeholder="Paste user ID here..."
-							placeholderTextColor="#999"
-							autoCapitalize="none"
-							autoCorrect={false}
-						/>
-						
-						<View style={styles.modalButtons}>
-							<TouchableOpacity 
-								style={[styles.modalButton, styles.secondaryButton]}
-								onPress={createSelfChat}
-								disabled={isCreating}
-							>
-								<Text style={styles.secondaryButtonText}>
-									{isCreating ? 'Creating...' : 'Self Chat'}
-								</Text>
-							</TouchableOpacity>
-							
-							<TouchableOpacity 
-								style={[styles.modalButton, styles.primaryButton]}
-								onPress={createChatWithUser}
-								disabled={isCreating || !otherUserId.trim()}
-							>
-								<Text style={styles.primaryButtonText}>
-									{isCreating ? 'Creating...' : 'Create Chat'}
-								</Text>
-							</TouchableOpacity>
-						</View>
-						
-						<TouchableOpacity 
-							style={styles.cancelButton}
-							onPress={() => {
-								setShowUserIdModal(false);
-								setOtherUserId('');
-							}}
-						>
-							<Text style={styles.cancelButtonText}>Cancel</Text>
-						</TouchableOpacity>
+					<Text style={styles.modalTitle}>New Conversation</Text>
+					
+					<Text style={styles.modalLabel}>Your User ID:</Text>
+					<Text style={styles.userIdText} selectable>{userId}</Text>
+					
+					<Text style={styles.modalLabel}>Conversation Name (optional):</Text>
+					<TextInput
+						style={styles.modalInput}
+						value={conversationName}
+						onChangeText={setConversationName}
+						placeholder="Name this conversation..."
+						placeholderTextColor="#999"
+						autoCapitalize="words"
+					/>
+
+					<Text style={styles.modalLabel}>Add Participants (optional):</Text>
+					<Text style={styles.helpText}>
+						Leave empty for self-chat, add 1 for direct chat, or 2+ for group chat. Comma-separated.
+					</Text>
+					<TextInput
+						style={[styles.modalInput, styles.multilineInput]}
+						value={participantIds}
+						onChangeText={setParticipantIds}
+						placeholder="user1, user2, user3..."
+						placeholderTextColor="#999"
+						autoCapitalize="none"
+						autoCorrect={false}
+						multiline
+					/>
+					
+					<TouchableOpacity 
+						style={[styles.fullWidthButton, styles.primaryButton]}
+						onPress={createConversation}
+						disabled={isCreating}
+					>
+						<Text style={styles.primaryButtonText}>
+							{isCreating ? 'Creating...' : 'Create Conversation'}
+						</Text>
+					</TouchableOpacity>
+					
+					<TouchableOpacity 
+						style={styles.cancelButton}
+						onPress={() => {
+							setShowUserIdModal(false);
+							setConversationName('');
+							setParticipantIds('');
+						}}
+					>
+						<Text style={styles.cancelButtonText}>Cancel</Text>
+					</TouchableOpacity>
 					</TouchableOpacity>
 				</TouchableOpacity>
 			</Modal>
@@ -484,6 +499,56 @@ const styles = StyleSheet.create({
 	cancelButtonText: {
 		color: '#999',
 		fontSize: 14,
+	},
+	typeSelector: {
+		flexDirection: 'row',
+		backgroundColor: '#f0f2f5',
+		borderRadius: 8,
+		padding: 4,
+		marginBottom: 16,
+		gap: 4,
+	},
+	typeButton: {
+		flex: 1,
+		paddingVertical: 8,
+		paddingHorizontal: 12,
+		borderRadius: 6,
+		alignItems: 'center',
+	},
+	typeButtonActive: {
+		backgroundColor: '#fff',
+		shadowColor: '#000',
+		shadowOffset: { width: 0, height: 1 },
+		shadowOpacity: 0.1,
+		shadowRadius: 2,
+		elevation: 2,
+	},
+	typeButtonText: {
+		fontSize: 14,
+		fontWeight: '500',
+		color: '#65676b',
+	},
+	typeButtonTextActive: {
+		color: '#007AFF',
+		fontWeight: '600',
+	},
+	helpText: {
+		fontSize: 12,
+		color: '#65676b',
+		marginBottom: 8,
+		marginTop: -4,
+	},
+	multilineInput: {
+		minHeight: 60,
+		textAlignVertical: 'top',
+		paddingTop: 12,
+	},
+	fullWidthButton: {
+		width: '100%',
+		padding: 14,
+		borderRadius: 8,
+		alignItems: 'center',
+		marginTop: 8,
 	},
 });
 

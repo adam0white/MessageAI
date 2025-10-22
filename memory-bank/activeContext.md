@@ -1,10 +1,15 @@
 # Active Context: MessageAI
 
-**Last Updated**: 2025-10-21  
-**Phase**: Phase 2.0 COMPLETE ✅ - Tested on Two Real Devices (Android + iPhone)
+**Last Updated**: 2025-10-22  
+**Phase**: Phase 3.0 TESTING & BUG FIXES
 
 ## Current Status
-Phase 2.0 fully complete and validated! Real-time messaging working between Android and iPhone devices. Core messaging infrastructure solid and production-ready. Deployed to Cloudflare Workers.
+Phase 3.0 features implemented and deployed. Currently fixing bugs found during real-device testing:
+- ✅ Fixed: user_presence table creation on first use
+- ✅ Fixed: Message status progression (sent → delivered)
+- ✅ Fixed: Duplicate message prevention after reconnection
+- 🔄 Testing: Status updates, presence tracking, group chat features
+- **Backend**: Version 458da6b7 deployed with proper delivered status logic
 
 ## Critical Test Results
 ✅ **WORKING**: Messages appear instantly when both users have chat open
@@ -55,35 +60,47 @@ Phase 2.0 fully complete and validated! Real-time messaging working between Andr
 11. **Deploy Early, Deploy Often**: Production deployment revealed issues faster than local debugging. Always have wrangler tail running.
 12. **Type Sharing**: Share more than types - share function names, constants, validation rules to prevent drift.
 
-## Recent Changes (Phase 2.0 - FINAL)
-- ✅ Durable Object with WebSocket handlers and session tracking
-- ✅ SQLite storage in Durable Objects for messages + read receipts
-- ✅ WebSocket client with connection event callbacks (onConnected, onReconnected, onDisconnected)
-- ✅ Optimistic UI updates for instant message feedback
-- ✅ Message sending: local write → WebSocket → server confirmation
-- ✅ Message receiving: WebSocket → SQLite → React Query update
-- ✅ Chat screen with message bubbles, timestamps, status indicators
-- ✅ Network monitoring triggers WebSocket reconnection when network returns
-- ✅ Offline messages sync automatically after reconnection (no duplicates)
-- ✅ History fetched on every reconnection to catch missed messages
-- ✅ WebSocket error spam reduced (only logs on initial failure)
-- ✅ Conversation CRUD endpoints in Worker
-- ✅ Deterministic conversation IDs working correctly
+### Phase 3 Learnings (Bug Fixes & Testing)
+13. **DO Storage Persists Independent of D1**: Clearing D1 doesn't clear DO SQLite storage. Same conversation ID = same DO = old messages appear. Post-MVP: implement conversation deletion endpoint that calls `ctx.storage.deleteAll()` before removing from D1.
+14. **Message Status Flow**: Backend must send 'delivered' status only when message actually reaches recipients. Check broadcast return count, not session count.
+15. **Database Schema Evolution**: Old databases may lack new tables. Either: (a) create tables on-demand in hooks, or (b) run migration on app update. Opted for (a) for presence table.
+16. **Conversation Creation UX**: Simplified to single generic flow - participant count determines type automatically (1=self, 2=direct, 3+=group). No separate UI for each type.
+17. **Real-time Cache Updates**: Must call `queryClient.invalidateQueries()` after updating cache to force re-render, especially for status changes.
+
+## Recent Changes (Phase 3.0 - COMPLETE)
+- ✅ SHA-256 conversation ID hashing for scalable groups (3+ participants)
+- ✅ Group conversation creation UI with type selector and multi-user input
+- ✅ Sender name attribution in MessageBubble component for group chats
+- ✅ Presence tracking system in Durable Objects (join/leave broadcasts)
+- ✅ Presence UI with online user count in chat headers
+- ✅ Enhanced read receipts with colored status indicators (blue/gray/red)
+- ✅ usePresence hook for tracking online users
+- ✅ useReadReceipts hook for tracking message read status
+- ✅ Group name display in conversation list and chat headers
+- ✅ Backend deployed to production with all Phase 3 features
+- ✅ Type-safe WebSocket protocol updated with onlineUserIds in ConnectedEvent
 
 ## Files to Note
-- `package.json`: React locked at 19.1.0 with overrides, expo-network added
-- `app/_layout.tsx`: Root providers (Clerk, React Query, DB init)
-- `app/(app)/_layout.tsx`: Protected layout with network monitoring
-- `app/(app)/chat/[id].tsx`: Chat screen (main messaging UI)
-- `app/(app)/index.tsx`: Conversation list (shows all chats)
+
+### Phase 3 New Files
+- `shared/utils.ts`: SHA-256 hashing utilities for conversation IDs
+- `hooks/usePresence.ts`: Presence tracking hook (online/offline status)
+- `hooks/useReadReceipts.ts`: Read receipts tracking hook
+- `components/MessageBubble.tsx`: Enhanced with sender names and colored status indicators
+
+### Core Files (Updated in Phase 3)
+- `app/(app)/chat/[id].tsx`: Chat screen with group support, presence, and online count
+- `app/(app)/index.tsx`: Conversation list with group creation UI and type selector
+- `worker/src/durable-objects/Conversation.ts`: Presence broadcasts on join/leave
+- `worker/src/db/schema.ts`: Uses SHA-256 for group conversation IDs
+- `shared/types.ts`: ConnectedEvent with onlineUserIds field
+
+### Phase 1-2 Files
+- `package.json`: React locked at 19.1.0 with overrides
 - `hooks/useMessages.ts`: Message sending/receiving with optimistic updates
 - `hooks/useConversations.ts`: Conversation management
-- `hooks/useNetworkMonitor.ts`: Network status and offline sync
 - `lib/api/websocket.ts`: WebSocket client singleton
-- `components/MessageBubble.tsx`: Message bubble component
-- `worker/src/durable-objects/Conversation.ts`: Full DO implementation
 - `worker/src/handlers/conversations.ts`: REST API for conversations
-- `worker/src/index.ts`: Worker with all routes (WS + REST)
 - `.env`: Contains Clerk keys + EXPO_PUBLIC_WORKER_URL (gitignored)
 
 ## Architecture Decisions for Future Phases

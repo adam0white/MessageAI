@@ -47,6 +47,7 @@ export function useMessages(conversationId: string) {
 	useEffect(() => {
 		const requestHistory = () => {
 			if (wsClient.isConnected()) {
+				console.log(`📥 Requesting message history for ${conversationId}`);
 				wsClient.send({
 					type: 'get_history',
 					conversationId,
@@ -143,20 +144,29 @@ export function useMessages(conversationId: string) {
 		const unsubscribe = wsClient.onMessage(async (message: ServerMessage) => {
 			try {
 				if (message.type === 'message_status') {
+					console.log(`📨 Message status update: ${message.clientId || message.messageId} -> ${message.status}`);
+					
 					if (message.clientId) {
-						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
-							return old.map(msg => 
-								msg.clientId === message.clientId
-									? { ...msg, id: message.messageId, status: message.status, localOnly: false, clientId: undefined }
-									: msg
-							);
-						});
-						
-						updateMessageByClientId(db, message.clientId, {
+						// Update optimistic message with server ID and status
+						await updateMessageByClientId(db, message.clientId, {
 							id: message.messageId,
 							status: message.status,
 						}).catch(err => console.error('useMessages: Failed to update message in DB:', err));
+						
+						// Update cache immediately
+						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
+							return old.map(msg => 
+								msg.clientId === message.clientId
+									? { ...msg, id: message.messageId, status: message.status, localOnly: false }
+									: msg
+							);
+						});
 					} else {
+						// Update existing message status
+						await updateMessageStatusQuery(db, message.messageId, message.status)
+							.catch(err => console.error('useMessages: Failed to update status in DB:', err));
+						
+						// Update cache immediately
 						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
 							return old.map(msg => 
 								msg.id === message.messageId
@@ -164,29 +174,58 @@ export function useMessages(conversationId: string) {
 									: msg
 							);
 						});
-						
-						updateMessageStatusQuery(db, message.messageId, message.status)
-							.catch(err => console.error('useMessages: Failed to update status in DB:', err));
 					}
+					
+					// Force re-render by invalidating query
+					queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
 				} else if (message.type == 'new_message') {
 					const incomingMessage = message.message;
 					
 					if (incomingMessage.conversationId === conversationId) {
-						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
-							const exists = old.some(msg => msg.id === incomingMessage.id);
-							return exists ? old : [...old, incomingMessage];
-						});
-
-						insertMessage(db, incomingMessage).catch(() => {});
+						console.log(`📩 New message received: ${incomingMessage.id}`);
+						
+						// Check if message already exists (prevent duplicates)
+						const exists = queryClient.getQueryData<Message[]>(['messages', conversationId])
+							?.some(msg => msg.id === incomingMessage.id || msg.clientId === incomingMessage.id);
+						
+						if (!exists) {
+							await insertMessage(db, incomingMessage).catch(() => {});
+							
+							queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
+								return [...old, incomingMessage];
+							});
+						}
 					}
 				} else if (message.type === 'history_response') {
+					console.log(`📚 History received: ${message.messages.length} messages`);
+					
+					// Get current messages to check for duplicates
+					const currentMessages = queryClient.getQueryData<Message[]>(['messages', conversationId]) || [];
+					const currentIds = new Set(currentMessages.map(m => m.id));
+					const currentClientIds = new Set(currentMessages.map(m => m.clientId).filter(Boolean));
+					
+					// Only insert messages that don't already exist
+					let newCount = 0;
 					for (const msg of message.messages) {
-						await insertMessage(db, msg).catch(() => {});
+						// Skip if we already have this message (by ID or clientId)
+						if (!currentIds.has(msg.id) && !currentClientIds.has(msg.id)) {
+							await insertMessage(db, msg).catch(() => {});
+							newCount++;
+						}
 					}
 					
-					queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
+					console.log(`📚 Inserted ${newCount} new messages from history`);
+					
+					// Invalidate to refresh from DB with all history
+					if (newCount > 0) {
+						queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
+					}
 				} else if (message.type === 'message_read') {
-					// Read receipt update
+					console.log(`👁️ Message read: ${message.messageId} by ${message.userId}`);
+					
+					await updateMessageStatusQuery(db, message.messageId, 'read')
+						.catch(err => console.error('useMessages: Failed to update read status:', err));
+					
 					queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
 						return old.map(msg => 
 							msg.id === message.messageId
@@ -194,6 +233,9 @@ export function useMessages(conversationId: string) {
 								: msg
 						);
 					});
+					
+					// Force re-render
+					queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
 				}
 			} catch (error) {
 				console.error('Error handling WebSocket message:', error);
@@ -203,7 +245,7 @@ export function useMessages(conversationId: string) {
 		return () => {
 			unsubscribe();
 		};
-	}, [conversationId, db, queryClient]);
+	}, [conversationId, db, queryClient, userId]);
 
 	return {
 		messages: messagesQuery.data || [],

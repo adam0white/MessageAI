@@ -144,12 +144,23 @@ export async function getConversationById(
 }
 
 export async function getConversationPreviews(
-	db: SQLite.SQLiteDatabase
+	db: SQLite.SQLiteDatabase,
+	currentUserId?: string
 ): Promise<ConversationPreview[]> {
-	const conversations = await db.getAllAsync<DBConversation>(
-		`SELECT * FROM conversations 
-		ORDER BY last_message_at DESC NULLS LAST`
-	);
+	// If currentUserId is provided, only get conversations where user is a participant
+	let query = `SELECT c.* FROM conversations c`;
+	const params: any[] = [];
+	
+	if (currentUserId) {
+		query += `
+			INNER JOIN conversation_participants cp ON c.id = cp.conversation_id
+			WHERE cp.user_id = ?`;
+		params.push(currentUserId);
+	}
+	
+	query += ` ORDER BY c.last_message_at DESC NULLS LAST`;
+	
+	const conversations = await db.getAllAsync<DBConversation>(query, params);
 
 	const previews: ConversationPreview[] = [];
 
@@ -329,6 +340,40 @@ export async function deleteMessage(
 	messageId: string
 ): Promise<void> {
 	await db.runAsync('DELETE FROM messages WHERE id = ?', [messageId]);
+}
+
+// ============================================================================
+// Database Cleanup Functions
+// ============================================================================
+
+/**
+ * Clear all user data from local database (call on logout)
+ */
+export async function clearAllData(db: SQLite.SQLiteDatabase): Promise<void> {
+	console.log('🗑️ Clearing all local database data...');
+	
+	// Ensure all tables exist before deleting (handle old schema versions)
+	try {
+		await db.execAsync(`
+			CREATE TABLE IF NOT EXISTS user_presence (
+				user_id TEXT PRIMARY KEY,
+				status TEXT NOT NULL CHECK(status IN ('online', 'offline', 'away')),
+				last_seen_at TEXT NOT NULL
+			);
+		`);
+	} catch (error) {
+		console.log('Note: user_presence table creation skipped');
+	}
+	
+	// Delete in reverse order of foreign key dependencies
+	await db.runAsync('DELETE FROM user_presence');
+	await db.runAsync('DELETE FROM read_receipts');
+	await db.runAsync('DELETE FROM messages');
+	await db.runAsync('DELETE FROM conversation_participants');
+	await db.runAsync('DELETE FROM conversations');
+	await db.runAsync('DELETE FROM users');
+	
+	console.log('✅ Local database cleared');
 }
 
 // ============================================================================

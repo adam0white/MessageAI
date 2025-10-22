@@ -27,7 +27,8 @@ export function useConversations() {
 	const conversationsQuery = useQuery({
 		queryKey: ['conversations', userId],
 		queryFn: async () => {
-			const localConversations = await getConversationPreviews(db);
+			// Get local conversations filtered by current user
+			const localConversations = await getConversationPreviews(db, userId || undefined);
 
 			if (userId) {
 				try {
@@ -40,7 +41,8 @@ export function useConversations() {
 							await upsertConversation(db, conv);
 						}
 
-						const updated = await getConversationPreviews(db);
+						// Re-fetch with user filter after syncing from server
+						const updated = await getConversationPreviews(db, userId);
 						return updated.sort((a, b) => {
 							const aTime = a.lastMessage?.createdAt || a.id;
 							const bTime = b.lastMessage?.createdAt || b.id;
@@ -49,6 +51,7 @@ export function useConversations() {
 					}
 				} catch (error) {
 					// Offline - use local data
+					console.log('📵 Offline: using local conversations');
 				}
 			}
 

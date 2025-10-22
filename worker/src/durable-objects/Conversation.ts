@@ -168,12 +168,25 @@ export class Conversation extends DurableObject<Env> {
 
 		console.log(`User ${userId} connected to conversation ${conversationId}. Total connections: ${this.sessions.size}`);
 
-		// Send initial connection acknowledgment
+		// Get list of currently connected users (before adding the new user)
+		const onlineUserIds = this.getConnectedUserIds();
+
+		// Send initial connection acknowledgment with online users list
 		const welcomeMessage: ServerMessage = {
 			type: 'connected',
 			timestamp: new Date().toISOString(),
+			onlineUserIds: onlineUserIds, // Send list of currently online users
 		};
 		server.send(JSON.stringify(welcomeMessage));
+
+		// Broadcast presence update to all other participants (that user just came online)
+		const presenceUpdate: ServerMessage = {
+			type: 'presence_update',
+			userId,
+			status: 'online',
+			timestamp: new Date().toISOString(),
+		};
+		this.broadcast(presenceUpdate, userId);
 
 		return new Response(null, {
 			status: 101,
@@ -291,7 +304,21 @@ export class Conversation extends DurableObject<Env> {
 				type: 'new_message',
 				message: newMessage,
 			};
-			this.broadcast(broadcastMessage, session.userId);
+			const recipientsCount = this.broadcast(broadcastMessage, session.userId);
+			
+			// If message was successfully delivered to at least one recipient, mark as delivered
+			if (recipientsCount > 0) {
+				console.log(`✓ Message ${messageId} delivered to ${recipientsCount} recipient(s)`);
+				const deliveredStatus: ServerMessage = {
+					type: 'message_status',
+					messageId,
+					status: 'delivered',
+					serverTimestamp: now,
+				};
+				ws.send(JSON.stringify(deliveredStatus));
+			} else {
+				console.log(`⚠️ Message ${messageId} not delivered (no connected recipients)`);
+			}
 
 		} catch (error) {
 			console.error('Error handling send_message:', error);
@@ -348,6 +375,30 @@ export class Conversation extends DurableObject<Env> {
 				hasMore: messages.length === (data.limit || 50),
 			};
 			ws.send(JSON.stringify(response));
+
+			// Notify senders that their undelivered messages are now delivered
+			// Find all messages in history that were sent by others but not yet marked as delivered
+			const undeliveredToMe = messages.filter(msg => 
+				msg.senderId !== session.userId && 
+				msg.status === 'sent'
+			);
+
+			if (undeliveredToMe.length > 0) {
+				console.log(`📬 Marking ${undeliveredToMe.length} messages as delivered to ${session.userId}`);
+				
+				// Send delivered status to all senders
+				for (const msg of undeliveredToMe) {
+					const deliveredNotification: ServerMessage = {
+						type: 'message_status',
+						messageId: msg.id,
+						status: 'delivered',
+						serverTimestamp: new Date().toISOString(),
+					};
+					
+					// Broadcast to everyone (senders will update their UI)
+					this.broadcast(deliveredNotification);
+				}
+			}
 		} catch (error) {
 			console.error('Error handling get_history:', error);
 			const errorResponse: ServerMessage = {
@@ -381,6 +432,16 @@ export class Conversation extends DurableObject<Env> {
 		const session = this.sessions.get(ws);
 		if (session) {
 			console.log(`User ${session.userId} disconnected from conversation ${session.conversationId}. Code: ${code}, Reason: ${reason}`);
+			
+			// Broadcast offline status to remaining participants
+			const presenceUpdate: ServerMessage = {
+				type: 'presence_update',
+				userId: session.userId,
+				status: 'offline',
+				timestamp: new Date().toISOString(),
+			};
+			this.broadcast(presenceUpdate);
+			
 			this.sessions.delete(ws);
 			console.log(`Total connections remaining: ${this.sessions.size}`);
 		}
@@ -403,8 +464,9 @@ export class Conversation extends DurableObject<Env> {
 	/**
 	 * Broadcast a message to all connected clients in this conversation
 	 * Excludes the sender by default
+	 * Returns the number of clients the message was successfully sent to
 	 */
-	private broadcast(message: ServerMessage, excludeUserId?: string): void {
+	private broadcast(message: ServerMessage, excludeUserId?: string): number {
 		const serialized = JSON.stringify(message);
 		let sentCount = 0;
 
@@ -425,6 +487,7 @@ export class Conversation extends DurableObject<Env> {
 		}
 
 		console.log(`Broadcasted message to ${sentCount} clients`);
+		return sentCount;
 	}
 
 	/**
