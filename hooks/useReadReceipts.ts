@@ -4,10 +4,11 @@
  * Manages read receipts for messages
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { ServerMessage } from '../lib/api/types';
 import { wsClient } from '../lib/api/websocket';
+import { useAuthStore } from '../lib/stores/auth';
 
 export interface ReadReceiptInfo {
 	messageId: string;
@@ -76,6 +77,18 @@ export function useReadReceipts(conversationId: string) {
 		}
 	};
 
+	const markAsRead = useCallback((messageId: string) => {
+		const { userId } = useAuthStore.getState();
+		if (!userId) return;
+
+		// Send mark_read message to server
+		wsClient.send({
+			type: 'mark_read',
+			messageId,
+			userId,
+		});
+	}, []);
+
 	return {
 		getReadReceipts: (messageId: string) => readReceipts.get(messageId) || [],
 		getReadCount: (messageId: string) => readReceipts.get(messageId)?.length || 0,
@@ -83,6 +96,7 @@ export function useReadReceipts(conversationId: string) {
 			const receipts = readReceipts.get(messageId) || [];
 			return receipts.some(r => r.userId === userId);
 		},
+		markAsRead,
 	};
 }
 

@@ -158,40 +158,43 @@
 
 ---
 
-**Status:** Phase 3.0 Complete! ✅ 
+**Status:** Phase 3.0 COMPLETE & VALIDATED ✅ 
 
 **Phase 3 Achievements (Oct 22, 2025):**
 - ✅ **SHA-256 Conversation Hashing**: Scalable group IDs using crypto hashing for 3+ participants
-- ✅ **Group Chat UI**: Type selector (Direct/Group), group name input, multi-user picker with comma-separated IDs
+- ✅ **Simplified Conversation Creation**: Single UI that auto-detects type (1=self, 2=direct, 3+=group), name optional for all
 - ✅ **Sender Attribution**: Messages in group chats show sender names above bubbles
 - ✅ **Presence Tracking**: Real-time online/offline status tracking in Durable Objects
-- ✅ **Presence UI**: Online user count displayed in group chat headers ("X online")
-- ✅ **Enhanced Read Receipts**: Colored status indicators (blue ✓✓ for read, gray for sent, red ! for failed)
-- ✅ **Backend Deployed**: All features live at https://messageai-worker.abdulisik.workers.dev
+- ✅ **Presence UI**: Online count displayed for ALL chat types ("X online")
+- ✅ **Auto-mark-as-read**: Messages automatically marked as read when viewed
+- ✅ **Enhanced Status Indicators**: Gray ○ → ✓ → ✓✓ → **Green ✓✓** (read)
+- ✅ **Retroactive Delivery**: Messages marked delivered when recipient fetches history
+- ✅ **Message Deduplication**: No duplicate messages after reconnection
+- ✅ **Database Cleanup**: Local DB cleared on logout (user data isolation)
+- ✅ **Backend Deployed**: Version 6bfee91f at https://messageai-worker.abdulisik.workers.dev
 
 **Architecture Enhancements:**
-- 🔧 Unified architecture: Self-chat, 1-on-1, and group chat use the same infrastructure
-- 🔧 Deterministic IDs: Simple concat for 1-2 users, SHA-256 hash for 3+ (backward compatible)
-- 🔧 Presence broadcasts: Join/leave events automatically sent to all connected participants
-- 🔧 Type-safe WebSocket protocol: ConnectedEvent now includes onlineUserIds list
-- 🔧 Local-first with sync: Presence and read receipts persist to SQLite for offline viewing
+- 🔧 Unified architecture: Self-chat, 1-on-1, and group chat use same infrastructure
+- 🔧 Deterministic IDs: Simple concat for 1-2 users, SHA-256 hash for 3+
+- 🔧 Presence broadcasts: Join/leave events automatically sent to all participants
+- 🔧 Type-safe WebSocket protocol: ConnectedEvent includes onlineUserIds list
+- 🔧 Auto read receipts: Sent automatically when messages viewed
+- 🔧 Broadcast return count: Backend checks actual delivery, not just session count
 
-**Group Chat Features Implemented:**
-1. ✅ Create groups with 3+ participants
-2. ✅ Custom group names
-3. ✅ Sender names displayed on messages
-4. ✅ Real-time online user tracking
-5. ✅ Broadcast messaging to all participants
-6. ✅ Read receipt tracking per user
-
-**Testing Ready:**
-- Create group chat with 3+ users (comma-separated user IDs)
-- Send messages and verify sender names appear
-- Check online user count updates when participants join/leave
-- Verify colored checkmarks (gray → blue when read)
+**Validated on Real Devices (iOS Simulator + Android Physical)**:
+1. ✅ Group chat with 3 users working perfectly
+2. ✅ Online count updates in real-time (join/leave)
+3. ✅ Sender names displayed in group messages
+4. ✅ Status progression: gray ○ → ✓ → ✓✓ → green ✓✓
+5. ✅ Read receipts sent automatically when viewing
+6. ✅ Offline messages synced on reconnection
+7. ✅ No duplicate messages
+8. ✅ Logout clears database properly
 
 **Next Phase:** Phase 4.0 - Push Notifications & Final MVP Deployment
 
-**Known Limitations (to be addressed in Phase 4):**
-- Messages only received when chat is open (background messages require push notifications)
+**Known Limitations (Require Phase 4 - Push Notifications):**
+- **Read receipts only work when sender online**: Sender must have chat open to see green checkmarks. When sender closes chat and recipient reads message, sender never receives the update. This is fundamental to per-conversation WebSocket pattern - requires push notifications to solve.
+- **Background messages not received**: Messages only received when chat is active (standard WebSocket behavior)
+- **Status updates require active connection**: Sender must be connected to see delivered/read changes
 - No user search/directory (currently paste user IDs manually)

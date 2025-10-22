@@ -22,6 +22,7 @@ import { MessageBubble } from '../../../components/MessageBubble';
 import { useMessages } from '../../../hooks/useMessages';
 import { useConversation } from '../../../hooks/useConversations';
 import { usePresence } from '../../../hooks/usePresence';
+import { useReadReceipts } from '../../../hooks/useReadReceipts';
 import { wsClient } from '../../../lib/api/websocket';
 import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
@@ -39,6 +40,7 @@ export default function ChatScreen() {
 	const { messages, isLoading, sendMessage, isSending, refetch } = useMessages(conversationId);
 	const { conversation } = useConversation(conversationId);
 	const { onlineUserIds, onlineCount } = usePresence(conversationId);
+	const { markAsRead } = useReadReceipts(conversationId);
 	
 	// Determine if this is a group chat (3+ participants)
 	const isGroupChat = conversation ? conversation.participants.length >= 3 : false;
@@ -54,6 +56,24 @@ export default function ChatScreen() {
 			wsClient.disconnect();
 		};
 	}, [userId, conversationId]);
+
+	// Mark all messages as read when chat is opened/focused
+	useEffect(() => {
+		if (!userId || messages.length === 0) return;
+
+		// Mark all unread messages from others as read
+		const unreadMessages = messages.filter(msg => 
+			msg.senderId !== userId && 
+			msg.status !== 'read'
+		);
+
+		if (unreadMessages.length > 0) {
+			console.log(`👁️ Marking ${unreadMessages.length} messages as read`);
+			unreadMessages.forEach(msg => {
+				markAsRead(msg.id);
+			});
+		}
+	}, [messages, userId, markAsRead]);
 
 	// Scroll to bottom when new messages arrive
 	useEffect(() => {
@@ -113,17 +133,6 @@ export default function ChatScreen() {
 		return 'Chat';
 	};
 
-	// Check if recipient is online (for 1-on-1 chats)
-	const isRecipientOnline = () => {
-		if (isGroupChat) return false; // Use online count for groups
-		
-		// For 1-on-1, check if the other user is online
-		const otherParticipant = conversation?.participants.find(p => p.userId !== userId);
-		if (!otherParticipant) return false;
-		
-		return onlineUserIds.includes(otherParticipant.userId);
-	};
-
 	return (
 		<>
 			<Stack.Screen 
@@ -131,19 +140,11 @@ export default function ChatScreen() {
 					title: getHeaderTitle(),
 					headerRight: () => (
 						<View style={styles.headerRight}>
-							{isGroupChat ? (
-								// For groups: show online count
-								wsStatus === 'connected' && onlineCount > 0 && (
-									<>
-										<View style={styles.onlineIndicator} />
-										<Text style={styles.onlineCount}>{onlineCount} online</Text>
-									</>
-								)
-							) : (
-								// For 1-on-1: show green only if recipient is online
-								isRecipientOnline() && (
+							{wsStatus === 'connected' && onlineCount > 0 && (
+								<>
 									<View style={styles.onlineIndicator} />
-								)
+									<Text style={styles.onlineCount}>{onlineCount} online</Text>
+								</>
 							)}
 						</View>
 					),

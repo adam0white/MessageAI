@@ -60,7 +60,7 @@ export function MessageBubble({ message, isGroupChat = false, showSenderName = f
 			case 'delivered':
 				return { icon: '✓✓', color: '#999' }; // Double check for delivered
 			case 'read':
-				return { icon: '✓✓', color: '#0084ff' }; // Blue double check for read
+				return { icon: '✓✓', color: '#44b700' }; // Green double check for read
 			case 'failed':
 				return { icon: '!', color: '#ff3b30' }; // Red exclamation for failed
 			default:

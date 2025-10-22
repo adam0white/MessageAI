@@ -1,23 +1,29 @@
 # Active Context: MessageAI
 
 **Last Updated**: 2025-10-22  
-**Phase**: Phase 3.0 TESTING & BUG FIXES
+**Phase**: Phase 3.0 COMPLETE ✅
 
 ## Current Status
-Phase 3.0 features implemented and deployed. Currently fixing bugs found during real-device testing:
-- ✅ Fixed: user_presence table creation on first use
-- ✅ Fixed: Message status progression (sent → delivered)
-- ✅ Fixed: Duplicate message prevention after reconnection
-- 🔄 Testing: Status updates, presence tracking, group chat features
-- **Backend**: Version 458da6b7 deployed with proper delivered status logic
+Phase 3.0 validated and complete! All features tested on real devices (iOS simulator + Android physical device):
+- ✅ Group chat with 3+ participants working
+- ✅ Presence tracking (online count) working across all chat types  
+- ✅ Message status: gray ○ → gray ✓ → gray ✓✓ → green ✓✓ (read)
+- ✅ Read receipts automatically sent when viewing messages
+- ✅ Retroactive delivery status when recipient comes online
+- ✅ Simplified conversation creation (auto-detects type from participant count)
+- **Backend**: Version 6bfee91f deployed and stable
 
-## Critical Test Results
+## Critical Test Results (Phase 3 Validated)
 ✅ **WORKING**: Messages appear instantly when both users have chat open
-✅ **WORKING**: Status indicators update in real-time (○ → ✓)
+✅ **WORKING**: Status indicators: gray ○ → gray ✓ → gray ✓✓ → green ✓✓
 ✅ **WORKING**: Messages persist across app restarts
-✅ **WORKING**: Deterministic conversation IDs prevent duplicates
-✅ **WORKING**: Historical message loading via get_history
-⚠️ **LIMITATION**: Background messages require chat to be open (need push notifications)
+✅ **WORKING**: Group chat with 3+ participants
+✅ **WORKING**: Online presence tracking (shows "X online")
+✅ **WORKING**: Sender names in group chat messages
+✅ **WORKING**: Auto-mark-as-read when viewing messages
+✅ **WORKING**: Retroactive delivery status on reconnection
+✅ **WORKING**: Database cleanup on logout (no cross-user leakage)
+⚠️ **LIMITATION**: Read receipts only received when sender online (requires Phase 4 push)
 
 ## Production Deployment
 - **Worker URL**: https://messageai-worker.abdulisik.workers.dev
@@ -66,19 +72,27 @@ Phase 3.0 features implemented and deployed. Currently fixing bugs found during 
 15. **Database Schema Evolution**: Old databases may lack new tables. Either: (a) create tables on-demand in hooks, or (b) run migration on app update. Opted for (a) for presence table.
 16. **Conversation Creation UX**: Simplified to single generic flow - participant count determines type automatically (1=self, 2=direct, 3+=group). No separate UI for each type.
 17. **Real-time Cache Updates**: Must call `queryClient.invalidateQueries()` after updating cache to force re-render, especially for status changes.
+18. **Retroactive Status Updates**: When recipient fetches history, backend marks undelivered messages as delivered and broadcasts status updates. This catches messages sent while recipient was offline.
+19. **Read Receipts Require Active Connection**: Sender must be connected to receive read receipt updates. When sender closes chat, they miss read receipts. This is fundamental to per-conversation WebSocket pattern - requires push notifications (Phase 4) to solve.
+20. **Status Indicator Colors Matter**: Blue checkmarks invisible against blue message bubbles. Changed read status to green (#44b700) for visibility.
+21. **Auto-mark-as-read**: When user opens chat, all unread messages automatically marked as read via WebSocket. Prevents manual marking and provides instant feedback to senders (if they're connected).
+22. **Presence Shows Other Users, Not Self**: Online indicator should show OTHER participants' status, not your own connection state. For all chat types, show "X online" count (excludes yourself).
 
-## Recent Changes (Phase 3.0 - COMPLETE)
+## Recent Changes (Phase 3.0 - COMPLETE & VALIDATED)
 - ✅ SHA-256 conversation ID hashing for scalable groups (3+ participants)
-- ✅ Group conversation creation UI with type selector and multi-user input
+- ✅ Simplified conversation creation (single UI, auto-detects type, name optional for all)
 - ✅ Sender name attribution in MessageBubble component for group chats
 - ✅ Presence tracking system in Durable Objects (join/leave broadcasts)
-- ✅ Presence UI with online user count in chat headers
-- ✅ Enhanced read receipts with colored status indicators (blue/gray/red)
+- ✅ Presence UI with online count shown for ALL chat types (1=self, 2=direct, 3+=group)
+- ✅ Auto-mark-as-read when viewing messages (sends read receipts automatically)
+- ✅ Retroactive delivery status (messages marked delivered whenік fetches history)
+- ✅ Enhanced status indicators: gray ○ → gray ✓ → gray ✓✓ → GREEN ✓✓ (read)
+- ✅ Message deduplication on reconnection (prevents duplicate offline messages)
+- ✅ Database cleanup on logout (prevents cross-user data leakage)
 - ✅ usePresence hook for tracking online users
-- ✅ useReadReceipts hook for tracking message read status
-- ✅ Group name display in conversation list and chat headers
-- ✅ Backend deployed to production with all Phase 3 features
-- ✅ Type-safe WebSocket protocol updated with onlineUserIds in ConnectedEvent
+- ✅ useReadReceipts hook with markAsRead function
+- ✅ Backend deployed to production (Version 6bfee91f) - all features working
+- ✅ Tested on real devices: iOS simulator + Android physical device
 
 ## Files to Note
 
@@ -112,5 +126,10 @@ See `systemPatterns.md` for detailed notes on:
 - Background message strategy: Push notifications (Phase 4)
 - Single vs multiple WebSocket connections
 
+## Known Limitations (Require Phase 4)
+1. **Read receipts only work when sender is online**: Sender must have chat open to receive read receipt updates. When sender closes chat and recipient reads message, sender never sees green checkmarks. **Fix**: Push notifications to update status even when disconnected.
+2. **Background messages require chat to be open**: Messages only received when chat screen is active. **FixMenuPhase 4 push notifications.
+3. **Old DO messages persist**: Clearing D1 doesn't clear DO storage. Same conversation ID = old messages reappear. **Fix**: Implement conversation deletion endpoint with `ctx.storage.deleteAll()`.
+
 ## Next Session Priority
-Phase 3 or Phase 4 tasks. Phase 2 is solid and tested on multiple real devices!
+Phase 4: Push Notifications & Final MVP Deployment

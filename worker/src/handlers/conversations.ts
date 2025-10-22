@@ -34,12 +34,7 @@ export async function handleCreateConversation(
 			);
 		}
 
-		if (data.type === 'group' && !data.name) {
-			return new Response(
-				JSON.stringify({ error: 'Group conversations require a name' }),
-				{ status: 400, headers: { 'Content-Type': 'application/json' } }
-			);
-		}
+		// Name is optional for all conversation types
 
 		// Create conversation in D1
 		const conversation = await createConversation(env.DB, data);
