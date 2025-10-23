@@ -32,8 +32,6 @@ export default {
 	async fetch(request, env, ctx): Promise<Response> {
 		const url = new URL(request.url);
 
-		console.log(`📥 ${request.method} ${url.pathname}`);
-
 		// CORS headers for development
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',

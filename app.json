@@ -15,7 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.messageai.app"
+      "bundleIdentifier": "com.messageai.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -41,14 +44,11 @@
           "icon": "./assets/icon.png",
           "color": "#ffffff",
           "sounds": [],
-          "mode": "production"
+          "mode": "production",
+          "iosDisplayInForeground": true
         }
       ]
     ],
-    "notification": {
-      "icon": "./assets/icon.png",
-      "color": "#ffffff"
-    },
     "extra": {
       "router": {},
       "eas": {

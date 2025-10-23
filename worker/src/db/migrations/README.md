@@ -35,6 +35,8 @@ npx wrangler d1 execute messageai-db --remote --file=./src/db/migrations/0001_in
 ## Migration Files
 
 - `0001_initial_schema.sql` - Initial tables (users, conversations, participants, push_tokens)
+- `0002_read_receipts_tracking.sql` - Add last_read_by column for tracking read receipts in D1
+- `0003_last_message_preview.sql` - Add last_message_content and last_message_sender_id for conversation list previews
 
 ## Notes
 

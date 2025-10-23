@@ -1,12 +1,6 @@
-/**
- * Sign Up Screen
- * 
- * Allows users to create an account with email/password
- */
-
+import React, { useState } from 'react';
 import { useSignUp } from '@clerk/clerk-expo';
 import { Link, useRouter } from 'expo-router';
-import { useState } from 'react';
 import {
 	View,
 	Text,
@@ -24,6 +18,8 @@ export default function SignUpScreen() {
 
 	const [email, setEmail] = useState('');
 	const [password, setPassword] = useState('');
+	const [firstName, setFirstName] = useState('');
+	const [lastName, setLastName] = useState('');
 	const [isLoading, setIsLoading] = useState(false);
 	const [pendingVerification, setPendingVerification] = useState(false);
 	const [code, setCode] = useState('');
@@ -37,6 +33,8 @@ export default function SignUpScreen() {
 			const result = await signUp.create({
 				emailAddress: email,
 				password,
+				firstName: firstName.trim() || undefined,
+				lastName: lastName.trim() || undefined,
 			});
 
 			// Check if sign-up is complete (verification disabled in Clerk)
@@ -123,6 +121,26 @@ export default function SignUpScreen() {
 			<View style={styles.content}>
 				<Text style={styles.title}>Create account</Text>
 				<Text style={styles.subtitle}>Sign up for MessageAI</Text>
+
+				<TextInput
+					style={styles.input}
+					placeholder="First Name (optional)"
+					value={firstName}
+					onChangeText={setFirstName}
+					autoCapitalize="words"
+					autoComplete="name-given"
+					editable={!isLoading}
+				/>
+
+				<TextInput
+					style={styles.input}
+					placeholder="Last Name (optional)"
+					value={lastName}
+					onChangeText={setLastName}
+					autoCapitalize="words"
+					autoComplete="name-family"
+					editable={!isLoading}
+				/>
 
 				<TextInput
 					style={styles.input}

@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { ClientMessage, ServerMessage, Message } from '../types';
-import { getPushTokensByUserId, updateConversationLastMessage } from '../db/schema';
+import { getPushTokensByUserId, updateConversationLastMessage, updateUserLastRead, getLastReadTimestamps } from '../db/schema';
 import { sendMessageNotification, sendReadReceiptNotification } from '../handlers/notifications';
 
 /**
@@ -63,8 +63,6 @@ export class Conversation extends DurableObject<Env> {
 				this.sessions.set(ws, meta as Session);
 			}
 		});
-		
-		console.log(`DO initialized with ${this.sessions.size} connections`);
 	}
 
 	/**
@@ -167,8 +165,6 @@ export class Conversation extends DurableObject<Env> {
 
 		// Store session in memory map
 		this.sessions.set(server, session);
-
-		console.log(`User ${userId} connected to conversation ${conversationId}. Total connections: ${this.sessions.size}`);
 
 		// Get list of currently connected users (before adding the new user)
 		const onlineUserIds = this.getConnectedUserIds();
@@ -291,8 +287,14 @@ export class Conversation extends DurableObject<Env> {
 			// Save to SQLite storage
 			await this.saveMessage(newMessage);
 
-			// Update lastMessageAt in D1 for conversation list polling
-			await updateConversationLastMessage(this.env.DB, session.conversationId, now);
+			// Update lastMessageAt and preview in D1 for conversation list polling
+			await updateConversationLastMessage(
+				this.env.DB, 
+				session.conversationId, 
+				now,
+				data.content, // Message content for preview
+				session.userId // Sender ID
+			);
 
 			// Send confirmation to sender
 			const confirmationResponse: ServerMessage = {
@@ -316,16 +318,18 @@ export class Conversation extends DurableObject<Env> {
 			
 			// If message was successfully delivered to at least one recipient, mark as delivered
 			if (recipientsCount > 0) {
-				console.log(`✓ Message ${messageId} delivered to ${recipientsCount} recipient(s)`);
+				// Update message status in storage so it persists
+				await this.updateMessageStatus(messageId, 'delivered');
+				
 				const deliveredStatus: ServerMessage = {
 					type: 'message_status',
 					messageId,
 					status: 'delivered',
 					serverTimestamp: now,
 				};
+				// Send to sender and broadcast to all (in case sender reconnects later)
 				ws.send(JSON.stringify(deliveredStatus));
-			} else {
-				console.log(`⚠️ Message ${messageId} not delivered (no connected recipients)`);
+				this.broadcast(deliveredStatus);
 			}
 
 		} catch (error) {
@@ -345,18 +349,23 @@ export class Conversation extends DurableObject<Env> {
 	 */
 	private async handleMarkRead(ws: WebSocket, session: Session, data: ClientMessage & { type: 'mark_read' }): Promise<void> {
 		try {
-			// Save read receipt
+			const now = new Date().toISOString();
+
+			// Save read receipt in Durable Object storage
 			await this.saveReadReceipt(data.messageId, data.userId);
 
 			// Update message status to read
 			await this.updateMessageStatus(data.messageId, 'read');
+
+			// Track read timestamp in D1 for offline users
+			await updateUserLastRead(this.env.DB, session.conversationId, data.userId, now);
 
 			// Broadcast read receipt to all participants
 			const readEvent: ServerMessage = {
 				type: 'message_read',
 				messageId: data.messageId,
 				userId: data.userId,
-				readAt: new Date().toISOString(),
+				readAt: now,
 			};
 			this.broadcast(readEvent);
 
@@ -380,9 +389,32 @@ export class Conversation extends DurableObject<Env> {
 				data.before
 			);
 
+			// Get read timestamps from D1 to compute accurate statuses for offline users
+			const lastReadTimestamps = await getLastReadTimestamps(this.env.DB, data.conversationId);
+
+			// Update message statuses based on D1 read timestamps
+			const messagesWithStatus = messages.map(msg => {
+				// If someone read messages after this one was sent, mark as read
+				let finalStatus = msg.status;
+				
+				// Check each participant's last read timestamp
+				for (const [userId, readTimestamp] of Object.entries(lastReadTimestamps)) {
+					// Don't check sender's own read status
+					if (userId === msg.senderId) continue;
+					
+					// If this message was created before user's last read time, it's been read
+					if (new Date(msg.createdAt) <= new Date(readTimestamp)) {
+						finalStatus = 'read';
+						break; // At least one person read it
+					}
+				}
+				
+				return { ...msg, status: finalStatus };
+			});
+
 			const response: ServerMessage = {
 				type: 'history_response',
-				messages,
+				messages: messagesWithStatus,
 				hasMore: messages.length === (data.limit || 50),
 			};
 			ws.send(JSON.stringify(response));
@@ -442,8 +474,6 @@ export class Conversation extends DurableObject<Env> {
 	async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
 		const session = this.sessions.get(ws);
 		if (session) {
-			console.log(`User ${session.userId} disconnected from conversation ${session.conversationId}. Code: ${code}, Reason: ${reason}`);
-			
 			// Broadcast offline status to remaining participants
 			const presenceUpdate: ServerMessage = {
 				type: 'presence_update',
@@ -454,7 +484,6 @@ export class Conversation extends DurableObject<Env> {
 			this.broadcast(presenceUpdate);
 			
 			this.sessions.delete(ws);
-			console.log(`Total connections remaining: ${this.sessions.size}`);
 		}
 		ws.close(code, reason);
 	}
@@ -497,7 +526,6 @@ export class Conversation extends DurableObject<Env> {
 			}
 		}
 
-		console.log(`Broadcasted message to ${sentCount} clients`);
 		return sentCount;
 	}
 

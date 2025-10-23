@@ -1,12 +1,6 @@
-/**
- * Sign In Screen
- * 
- * Allows users to sign in with email/password
- */
-
+import React, { useState } from 'react';
 import { useSignIn } from '@clerk/clerk-expo';
 import { Link, useRouter } from 'expo-router';
-import { useState } from 'react';
 import {
 	View,
 	Text,

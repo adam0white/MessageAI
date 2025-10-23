@@ -1,9 +1,3 @@
-/**
- * Conversation List Screen
- * 
- * Displays all conversations for the current user
- */
-
 import React, { useState } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useRouter, Stack } from 'expo-router';
@@ -109,20 +103,12 @@ export default function ConversationListScreen() {
 		const conversationType: 'direct' | 'group' = allParticipants.length >= 3 ? 'group' : 'direct';
 		const trimmedName = conversationName.trim();
 
-		console.log('🆕 Creating conversation:', {
-			type: conversationType,
-			participants: allParticipants,
-			name: trimmedName || '(no name)',
-		});
-
 		try {
 			const conversation = await createConversationAsync({
 				type: conversationType,
 				participantIds: allParticipants,
 				name: trimmedName || undefined,
 			});
-
-			console.log('✅ Conversation created, navigating to:', conversation.id);
 			setShowUserIdModal(false);
 			setConversationName('');
 			setParticipantIds('');
@@ -164,56 +150,61 @@ export default function ConversationListScreen() {
 			
 			<View style={styles.container}>
 				<View style={styles.header}>
-					<Text style={styles.welcomeText}>
-						Welcome, {user?.emailAddresses[0]?.emailAddress}
-					</Text>
+					<View style={styles.headerTop}>
+						<Text style={styles.welcomeText}>
+							Welcome, {user?.firstName || user?.emailAddresses[0]?.emailAddress.split('@')[0]}
+						</Text>
+						<TouchableOpacity onPress={() => router.push('/profile')} style={styles.profileButton}>
+							<Text style={styles.profileButtonText}>Profile</Text>
+						</TouchableOpacity>
+					</View>
 					<TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
 						<Text style={styles.signOutText}>Sign Out</Text>
 					</TouchableOpacity>
 				</View>
 
-			<FlatList
-				data={conversations}
-				keyExtractor={(item) => item.id}
-				onRefresh={refetch}
-				refreshing={isLoading}
-				renderItem={({ item }) => {
-					const conversationName = getConversationName(item);
-					const lastMessageTime = item.lastMessage?.createdAt 
-						? formatTimestamp(item.lastMessage.createdAt)
-						: '';
+		<FlatList<ConversationPreview>
+			data={conversations}
+			keyExtractor={(item) => item.id}
+			onRefresh={refetch}
+			refreshing={isLoading}
+			renderItem={({ item }) => {
+				const conversationName = getConversationName(item);
+				const lastMessageTime = item.lastMessage?.createdAt 
+					? formatTimestamp(item.lastMessage.createdAt)
+					: '';
 
-					return (
-						<TouchableOpacity 
-							style={styles.conversationItem}
-							onPress={() => handleConversationPress(item.id)}
-						>
-							<View style={styles.avatar}>
-								<Text style={styles.avatarText}>
-									{conversationName.charAt(0).toUpperCase()}
+				return (
+					<TouchableOpacity 
+						style={styles.conversationItem}
+						onPress={() => handleConversationPress(item.id)}
+					>
+						<View style={styles.avatar}>
+							<Text style={styles.avatarText}>
+								{conversationName.charAt(0).toUpperCase()}
+							</Text>
+						</View>
+						<View style={styles.conversationContent}>
+							<View style={styles.conversationHeader}>
+								<Text style={styles.conversationName}>{conversationName}</Text>
+								{lastMessageTime && (
+									<Text style={styles.timestamp}>{lastMessageTime}</Text>
+								)}
+							</View>
+							<View style={styles.messageRow}>
+								<Text style={styles.lastMessage} numberOfLines={1}>
+									{item.lastMessage?.content || 'No messages yet'}
 								</Text>
+								{item.unreadCount > 0 && (
+									<View style={styles.unreadBadge}>
+										<Text style={styles.unreadText}>{item.unreadCount}</Text>
+									</View>
+								)}
 							</View>
-							<View style={styles.conversationContent}>
-								<View style={styles.conversationHeader}>
-									<Text style={styles.conversationName}>{conversationName}</Text>
-									{lastMessageTime && (
-										<Text style={styles.timestamp}>{lastMessageTime}</Text>
-									)}
-								</View>
-								<View style={styles.messageRow}>
-									<Text style={styles.lastMessage} numberOfLines={1}>
-										{item.lastMessage?.content || 'No messages yet'}
-									</Text>
-									{item.unreadCount > 0 && (
-										<View style={styles.unreadBadge}>
-											<Text style={styles.unreadText}>{item.unreadCount}</Text>
-										</View>
-									)}
-								</View>
-							</View>
-						</TouchableOpacity>
-					);
-				}}
+						</View>
+					</TouchableOpacity>
+				);
+			}}
 				ListEmptyComponent={
 					<View style={styles.emptyState}>
 						<Text style={styles.emptyText}>No conversations yet</Text>
@@ -236,35 +227,59 @@ export default function ConversationListScreen() {
 					activeOpacity={1}
 					onPress={() => setShowUserIdModal(false)}
 				>
-					<TouchableOpacity 
-						style={styles.modalContent}
-						activeOpacity={1}
-						onPress={(e) => e.stopPropagation()}
-					>
+				<TouchableOpacity 
+					style={styles.modalContent}
+					activeOpacity={1}
+					onPress={(e) => e.stopPropagation()}
+				>
 					<Text style={styles.modalTitle}>New Conversation</Text>
 					
-					<Text style={styles.modalLabel}>Your User ID:</Text>
-					<Text style={styles.userIdText} selectable>{userId}</Text>
+					<View style={styles.quickActions}>
+						<TouchableOpacity 
+							style={[styles.quickActionButton, styles.primaryButton]}
+							onPress={() => {
+								setParticipantIds('');
+								setConversationName('Notes');
+								createConversation();
+							}}
+							disabled={isCreating}
+						>
+							<Text style={styles.quickActionEmoji}>📝</Text>
+							<Text style={styles.quickActionText}>Self Chat</Text>
+						</TouchableOpacity>
+					</View>
+					
+					<View style={styles.divider}>
+						<View style={styles.dividerLine} />
+						<Text style={styles.dividerText}>or create custom</Text>
+						<View style={styles.dividerLine} />
+					</View>
+					
+					<Text style={styles.modalLabel}>Your User ID (share with others):</Text>
+					<View style={styles.userIdContainer}>
+						<Text style={styles.userIdText} selectable>{userId}</Text>
+						<Text style={styles.userIdCopyHint}>Long press to copy</Text>
+					</View>
 					
 					<Text style={styles.modalLabel}>Conversation Name (optional):</Text>
 					<TextInput
 						style={styles.modalInput}
 						value={conversationName}
 						onChangeText={setConversationName}
-						placeholder="Name this conversation..."
+						placeholder="e.g., Project Team, Family..."
 						placeholderTextColor="#999"
 						autoCapitalize="words"
 					/>
 
-					<Text style={styles.modalLabel}>Add Participants (optional):</Text>
+					<Text style={styles.modalLabel}>Add Participants:</Text>
 					<Text style={styles.helpText}>
-						Leave empty for self-chat, add 1 for direct chat, or 2+ for group chat. Comma-separated.
+						Enter user IDs separated by commas. Leave empty for self-chat, 1 ID for direct chat, 2+ for group.
 					</Text>
 					<TextInput
 						style={[styles.modalInput, styles.multilineInput]}
 						value={participantIds}
 						onChangeText={setParticipantIds}
-						placeholder="user1, user2, user3..."
+						placeholder="user_xxx, user_yyy..."
 						placeholderTextColor="#999"
 						autoCapitalize="none"
 						autoCorrect={false}
@@ -291,7 +306,7 @@ export default function ConversationListScreen() {
 					>
 						<Text style={styles.cancelButtonText}>Cancel</Text>
 					</TouchableOpacity>
-					</TouchableOpacity>
+				</TouchableOpacity>
 				</TouchableOpacity>
 			</Modal>
 			</View>
@@ -313,10 +328,28 @@ const styles = StyleSheet.create({
 		borderBottomWidth: 1,
 		borderBottomColor: '#eee',
 	},
-	welcomeText: {
-		fontSize: 14,
-		color: '#666',
+	headerTop: {
+		flexDirection: 'row',
+		justifyContent: 'space-between',
+		alignItems: 'center',
 		marginBottom: 8,
+	},
+	welcomeText: {
+		fontSize: 16,
+		fontWeight: '500',
+		color: '#000',
+		flex: 1,
+	},
+	profileButton: {
+		paddingHorizontal: 12,
+		paddingVertical: 6,
+		backgroundColor: '#f0f0f0',
+		borderRadius: 6,
+	},
+	profileButtonText: {
+		color: '#007AFF',
+		fontSize: 14,
+		fontWeight: '600',
 	},
 	signOutButton: {
 		alignSelf: 'flex-start',
@@ -445,14 +478,56 @@ const styles = StyleSheet.create({
 		marginTop: 12,
 		color: '#333',
 	},
+	quickActions: {
+		marginBottom: 16,
+	},
+	quickActionButton: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'center',
+		padding: 16,
+		borderRadius: 8,
+		gap: 8,
+	},
+	quickActionEmoji: {
+		fontSize: 24,
+	},
+	quickActionText: {
+		color: '#fff',
+		fontSize: 16,
+		fontWeight: '600',
+	},
+	divider: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		marginVertical: 20,
+	},
+	dividerLine: {
+		flex: 1,
+		height: 1,
+		backgroundColor: '#e4e6eb',
+	},
+	dividerText: {
+		fontSize: 12,
+		color: '#65676b',
+		marginHorizontal: 12,
+	},
+	userIdContainer: {
+		backgroundColor: '#f0f2f5',
+		padding: 12,
+		borderRadius: 8,
+		marginBottom: 8,
+	},
 	userIdText: {
 		fontSize: 12,
 		color: '#007AFF',
-		backgroundColor: '#f0f2f5',
-		padding: 10,
-		borderRadius: 6,
-		marginBottom: 8,
 		fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+		marginBottom: 4,
+	},
+	userIdCopyHint: {
+		fontSize: 10,
+		color: '#65676b',
+		fontStyle: 'italic',
 	},
 	modalInput: {
 		borderWidth: 1,

@@ -123,19 +123,19 @@ async function getReadReceiptsFromDB(
 	db: any,
 	conversationId: string
 ): Promise<ReadReceiptInfo[]> {
-	const results = await db.getAllAsync<{
-		message_id: string;
-		user_id: string;
-		read_at: string;
-	}>(
+	const results = await db.getAllAsync(
 		`SELECT rr.message_id, rr.user_id, rr.read_at
 		FROM read_receipts rr
 		INNER JOIN messages m ON rr.message_id = m.id
 		WHERE m.conversation_id = ?`,
 		[conversationId]
-	);
+	) as Array<{
+		message_id: string;
+		user_id: string;
+		read_at: string;
+	}>;
 
-	return results.map(r => ({
+	return results.map((r: { message_id: string; user_id: string; read_at: string }) => ({
 		messageId: r.message_id,
 		userId: r.user_id,
 		readAt: r.read_at,

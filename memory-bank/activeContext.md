@@ -1,7 +1,7 @@
 # Active Context: MessageAI
 
-**Last Updated**: 2025-10-22  
-**Phase**: Phase 4.0 COMPLETE ✅ (Foreground Notifications via Local Notifications + Polling)
+**Last Updated**: 2025-10-23  
+**Phase**: Phase 4.1 COMPLETE ✅ (Bug Fixes & UX Improvements)
 
 ## Current Status
 Phase 4.0 foreground notifications working via polling + local notifications (no FCM needed for MVP):
@@ -27,12 +27,12 @@ Phase 4.0 foreground notifications working via polling + local notifications (no
 
 ## Production Deployment
 - **Worker URL**: https://messageai-worker.abdulisik.workers.dev
-- **Latest Version**: ed366cec (Phase 4 - Foreground Notifications)
-- **D1 Database**: Migrated with push_tokens table, lastMessageAt tracking enabled
-- **Durable Objects**: SQLite enabled, D1 timestamp updates on new messages
-- **WebSocket**: wss:// secure connections working
-- **Foreground Notifications**: Polling + local notifications (working!)
-- **Monitoring**: wrangler tail running for live logs
+- **Latest Version**: f04f1532 (Phase 4 - Foreground Notifications Complete)
+- **D1 Database**: Migrations 0001-0003 applied (users, conversations, push_tokens, read receipts, message previews)
+- **Durable Objects**: SQLite enabled, syncs message previews to D1
+- **WebSocket**: wss:// secure connections
+- **Foreground Notifications**: Polling (3s) + local notifications + name fallback (email prefix)
+- **Monitoring**: wrangler tail for live logs
 
 ## Key Decisions Made
 - ✅ Platform: React Native with Expo SDK 54
@@ -88,87 +88,31 @@ Phase 4.0 foreground notifications working via polling + local notifications (no
 27. **ExponentPushToken vs ExpoPushToken**: ExponentPushToken = legacy Expo service (unreliable). ExpoPushToken = FCM (reliable). If seeing Exponent prefix, FCM isn't configured properly.
 28. **FCM is Complex**: FCM requires google-services.json, service account JSON, proper manifest configuration, and production builds. Too complex for MVP foreground-only notifications.
 29. **Test Local Notifications First**: Before debugging FCM, always test if local notifications work. If they do, FCM/config issue. If they don't, device/permissions issue.
+30. **React Query Cache Updates**: When polling returns fresh data, use `setQueryData()` to update cache directly instead of `invalidateQueries()`. This avoids extra network requests and ensures immediate UI updates. Only invalidate when you don't have the fresh data.
 
-## Recent Changes (Phase 4.0 - FOREGROUND NOTIFICATIONS)
+## Recent Changes (Phase 4.1 - Bug Fixes & UX Improvements - Oct 23, 2025)
 
-**Final Implementation (Polling + Local Notifications - WORKING!):**
-- ✅ Created `hooks/useGlobalMessages.ts` - Polls `/api/conversations` every 3s
-- ✅ Uses `lastMessageAt` timestamp to detect new activity
-- ✅ Shows local notifications via `Notifications.scheduleNotificationAsync`
-- ✅ Notification tap navigation to correct conversation
-- ✅ Works without FCM (Expo Go, dev builds, production)
-- ✅ Durable Objects update D1 `lastMessageAt` on every new message
-- ✅ Validated on physical Android device + emulator
+**Authentication & Profile:**
+- Added first name and last name fields to signup form (optional)
+- Created profile screen (`app/(app)/profile.tsx`) for viewing and updating user name
+- Added Profile button to conversation list header
 
-**Key Bug Fixes:**
-- 🐛 Durable Objects weren't updating `lastMessageAt` in D1 - Fixed
-- 🐛 API returned `Conversation` not `ConversationPreview` (no lastMessage) - Worked around using lastMessageAt
-- 🐛 Notification permissions not requested in final implementation - Fixed in useGlobalMessages
-- 🐛 Deprecated `shouldShowAlert` API - Updated to `shouldShowBanner`
+**Chat Experience:**
+- Fixed double gray check marks (delivered status) now persisting and broadcasting
+- Fixed chat history causing unnecessary refresh and scroll on enter
+- Improved scroll behavior to only scroll on new messages, not on history reload
+- Removed Enter key shortcut (multiline input on mobile doesn't support this pattern)
 
-**Attempted Approaches (Learning Process):**
-- ✅ Installed expo-notifications, expo-device, expo-constants packages
-- ✅ Created `hooks/useNotifications.ts` for permission management and token registration
-- ✅ Configured `app.json` with notification plugin and project ID
-- ✅ Set up foreground notification handler (alerts + sounds)
-- ✅ Implemented Android notification channels (MAX importance)
-- ✅ Added notification tap handler for navigation
-- ✅ Created `worker/src/handlers/push-tokens.ts` for token CRUD
-- ✅ Created `worker/src/handlers/notifications.ts` for Expo Push API integration
-- ✅ Updated Durable Object with offline user detection
-- ✅ Implemented smart push notification routing (online vs offline)
-- ✅ Added user info lookup for notification sender names
-- ✅ Deployed backend version b9acd9af with full push support
+**UX Improvements:**
+- Improved new conversation modal with quick "Self Chat" button
+- Better labels and help text for conversation creation
+- User ID prominently displayed with copy hint
 
-## Previous Changes (Phase 3.0 - COMPLETE & VALIDATED)
-- ✅ SHA-256 conversation ID hashing for scalable groups (3+ participants)
-- ✅ Simplified conversation creation (single UI, auto-detects type, name optional for all)
-- ✅ Sender name attribution in MessageBubble component for group chats
-- ✅ Presence tracking system in Durable Objects (join/leave broadcasts)
-- ✅ Presence UI with online count shown for ALL chat types (1=self, 2=direct, 3+=group)
-- ✅ Auto-mark-as-read when viewing messages (sends read receipts automatically)
-- ✅ Retroactive delivery status (messages marked delivered whenік fetches history)
-- ✅ Enhanced status indicators: gray ○ → gray ✓ → gray ✓✓ → GREEN ✓✓ (read)
-- ✅ Message deduplication on reconnection (prevents duplicate offline messages)
-- ✅ Database cleanup on logout (prevents cross-user data leakage)
-- ✅ usePresence hook for tracking online users
-- ✅ useReadReceipts hook with markAsRead function
-- ✅ Backend deployed to production (Version 6bfee91f) - all features working
-- ✅ Tested on real devices: iOS simulator + Android physical device
-
-## Files to Note
-
-### Phase 4 New Files
-- `hooks/useGlobalMessages.ts`: Polling-based foreground notifications (works without FCM)
-- `worker/src/handlers/push-tokens.ts`: Token registration/deletion API endpoints (for future FCM)
-- `worker/src/handlers/notifications.ts`: Expo Push API integration (for future FCM)
-
-### Phase 4 Updated Files
-- `app.json`: Added notification plugin, google-services.json path, EAS project ID
-- `app/(app)/_layout.tsx`: Integrated useGlobalMessages hook
-- `worker/src/index.ts`: Added push token API routes (for future FCM)
-- `worker/src/durable-objects/Conversation.ts`: Updates D1 lastMessageAt on new messages, offline detection
-
-### Phase 3 New Files
-- `shared/utils.ts`: SHA-256 hashing utilities for conversation IDs
-- `hooks/usePresence.ts`: Presence tracking hook (online/offline status)
-- `hooks/useReadReceipts.ts`: Read receipts tracking hook
-- `components/MessageBubble.tsx`: Enhanced with sender names and colored status indicators
-
-### Core Files (Updated in Phase 3)
-- `app/(app)/chat/[id].tsx`: Chat screen with group support, presence, and online count
-- `app/(app)/index.tsx`: Conversation list with group creation UI and type selector
-- `worker/src/durable-objects/Conversation.ts`: Presence broadcasts on join/leave
-- `worker/src/db/schema.ts`: Uses SHA-256 for group conversation IDs
-- `shared/types.ts`: ConnectedEvent with onlineUserIds field
-
-### Phase 1-2 Files
-- `package.json`: React locked at 19.1.0 with overrides
-- `hooks/useMessages.ts`: Message sending/receiving with optimistic updates
-- `hooks/useConversations.ts`: Conversation management
-- `lib/api/websocket.ts`: WebSocket client singleton
-- `worker/src/handlers/conversations.ts`: REST API for conversations
-- `.env`: Contains Clerk keys + EXPO_PUBLIC_WORKER_URL (gitignored)
+**Code Quality:**
+- Cleaned up excessive console.log noise in frontend (useMessages, usePresence, chat screen, index)
+- Cleaned up backend logging (connection logs, broadcast logs, emoji logs)
+- Removed redundant header comments from component files
+- Fixed linter errors (React imports, type issues)
 
 ## Architecture Decisions for Future Phases
 
@@ -187,25 +131,3 @@ See `systemPatterns.md` for detailed notes on:
 
 ## Next Session Priority
 Phase 4.5-4.7: Final MVP deployment and documentation
-
-## Phase 4.0 Summary (COMPLETE ✅)
-
-**What Works:**
-- ✅ Foreground notifications via polling + local notifications
-- ✅ 3-second polling detects new messages using `lastMessageAt` timestamp
-- ✅ Notifications show when user is on conversation list or in different chat
-- ✅ Tap notification navigates to correct conversation
-- ✅ Works on physical devices and emulators
-- ✅ No FCM complexity needed for MVP
-
-**Architecture:**
-- Durable Objects update `lastMessageAt` in D1 on every new message
-- Frontend polls `/api/conversations` every 3s
-- Compares timestamps to detect new activity
-- Shows local notification via `Notifications.scheduleNotificationAsync`
-- Deduplicates using Set of notification IDs
-
-**What Doesn't Work (By Design):**
-- Background notifications (app closed) - requires FCM
-- Instant notifications (polling has 0-3s delay) - requires global WebSocket
-- Message preview in notification (content in DO) - requires denormalization or DO fetch

@@ -1,9 +1,3 @@
-/**
- * Chat Screen
- * 
- * Main chat interface with message list, input, and send functionality
- */
-
 import React, { useState, useEffect, useRef } from 'react';
 import { 
 	View, 
@@ -36,6 +30,8 @@ export default function ChatScreen() {
 	
 	const [inputText, setInputText] = useState('');
 	const flatListRef = useRef<FlatList>(null);
+	const previousMessageCountRef = useRef(0);
+	const isInitialLoadRef = useRef(true);
 	
 	const { messages, isLoading, sendMessage, isSending, refetch } = useMessages(conversationId);
 	const { conversation } = useConversation(conversationId);
@@ -61,27 +57,36 @@ export default function ChatScreen() {
 	useEffect(() => {
 		if (!userId || messages.length === 0) return;
 
-		// Mark all unread messages from others as read
+		// Mark all unread messages from others as read (skip preview messages)
 		const unreadMessages = messages.filter(msg => 
 			msg.senderId !== userId && 
-			msg.status !== 'read'
+			msg.status !== 'read' &&
+			!msg.id.startsWith('preview_') // Skip preview messages from conversation list
 		);
 
 		if (unreadMessages.length > 0) {
-			console.log(`👁️ Marking ${unreadMessages.length} messages as read`);
 			unreadMessages.forEach(msg => {
 				markAsRead(msg.id);
 			});
 		}
 	}, [messages, userId, markAsRead]);
 
-	// Scroll to bottom when new messages arrive
+	// Scroll to bottom only when new messages arrive (not on initial load or refresh)
 	useEffect(() => {
 		if (messages.length > 0 && flatListRef.current) {
-			// Small delay to ensure the list has rendered
-			setTimeout(() => {
-				flatListRef.current?.scrollToEnd({ animated: true });
-			}, 100);
+			// Only scroll if:
+			// 1. Initial load (first time opening chat)
+			// 2. Message count increased (new message arrived)
+			const shouldScroll = isInitialLoadRef.current || messages.length > previousMessageCountRef.current;
+			
+			if (shouldScroll) {
+				setTimeout(() => {
+					flatListRef.current?.scrollToEnd({ animated: !isInitialLoadRef.current });
+				}, 100);
+				isInitialLoadRef.current = false;
+			}
+			
+			previousMessageCountRef.current = messages.length;
 		}
 	}, [messages.length]);
 
@@ -173,12 +178,6 @@ export default function ChatScreen() {
 								/>
 							)}
 							contentContainerStyle={messages.length === 0 ? styles.emptyMessageList : styles.messageList}
-							onContentSizeChange={() => {
-								// Auto-scroll to bottom when content changes
-								setTimeout(() => {
-									flatListRef.current?.scrollToEnd({ animated: true });
-								}, 100);
-							}}
 							onRefresh={refetch}
 							refreshing={isLoading}
 							ListEmptyComponent={
@@ -190,20 +189,17 @@ export default function ChatScreen() {
 						/>
 					)}
 
-					<View style={styles.inputContainer}>
-						<TextInput
-							style={styles.input}
-							value={inputText}
-							onChangeText={setInputText}
-							placeholder="Type a message..."
-							placeholderTextColor="#999"
-							multiline
-							maxLength={1000}
-							editable={!isSending}
-							returnKeyType="send"
-							blurOnSubmit={false}
-							onSubmitEditing={handleSend}
-						/>
+				<View style={styles.inputContainer}>
+					<TextInput
+						style={styles.input}
+						value={inputText}
+						onChangeText={setInputText}
+						placeholder="Type a message..."
+						placeholderTextColor="#999"
+						multiline
+						maxLength={1000}
+						editable={!isSending}
+					/>
 						<TouchableOpacity 
 							style={[
 								styles.sendButton,

@@ -78,8 +78,10 @@ export interface ConversationParticipant {
 	joinedAt: string;
 	role: 'admin' | 'member';
 	
-	// Populated when fetched
+	// Populated when fetched (either as nested user object or flattened fields)
 	user?: User;
+	name?: string;
+	avatarUrl?: string;
 }
 
 export interface ConversationPreview {
@@ -280,6 +282,8 @@ export interface DBConversation {
 	created_at: string;
 	updated_at: string;
 	last_message_at: string | null;
+	last_message_content: string | null;
+	last_message_sender_id: string | null;
 	unread_count: number;
 }
 

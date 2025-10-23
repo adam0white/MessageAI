@@ -1,10 +1,3 @@
-/**
- * MessageBubble Component
- * 
- * Displays an individual message with sender alignment and status
- * Shows sender name for group chats
- */
-
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';

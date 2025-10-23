@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useUser } from '@clerk/clerk-expo';
 import type { Conversation, CreateConversationRequest } from '../lib/api/types';
+import type { ConversationPreview } from '../shared/types';
 import { 
 	getConversationPreviews, 
 	upsertConversation,
@@ -27,23 +28,16 @@ export function useConversations() {
 	const conversationsQuery = useQuery({
 		queryKey: ['conversations', userId],
 		queryFn: async () => {
-			// Get local conversations filtered by current user
-			const localConversations = await getConversationPreviews(db, userId || undefined);
-
 			if (userId) {
 				try {
 					const response = await fetch(`${WORKER_URL}/api/conversations?userId=${userId}`);
 					if (response.ok) {
 						const data = await response.json();
-						const serverConversations: Conversation[] = data.conversations;
+						// Backend returns conversations that match ConversationPreview shape
+						const serverConversations = data.conversations as ConversationPreview[];
 
-						for (const conv of serverConversations) {
-							await upsertConversation(db, conv);
-						}
-
-						// Re-fetch with user filter after syncing from server
-						const updated = await getConversationPreviews(db, userId);
-						return updated.sort((a, b) => {
+						// Return server data directly (includes fresh lastMessage previews)
+						return serverConversations.sort((a, b) => {
 							const aTime = a.lastMessage?.createdAt || a.id;
 							const bTime = b.lastMessage?.createdAt || b.id;
 							return bTime.localeCompare(aTime);
@@ -55,6 +49,8 @@ export function useConversations() {
 				}
 			}
 
+			// Fallback to local DB when offline or no userId
+			const localConversations = await getConversationPreviews(db, userId || undefined);
 			return localConversations.sort((a, b) => {
 				const aTime = a.lastMessage?.createdAt || a.id;
 				const bTime = b.lastMessage?.createdAt || b.id;
@@ -62,9 +58,9 @@ export function useConversations() {
 			});
 		},
 		enabled: !!userId,
-		staleTime: 1000 * 10, // 10 seconds
+		staleTime: 0, // Always consider stale so invalidation works immediately
 		refetchOnWindowFocus: true,
-		refetchInterval: 5000, // Poll every 5 seconds for new messages/conversations
+		refetchInterval: false, // Disable auto-polling, we handle it in useGlobalMessages
 	});
 
 	return {

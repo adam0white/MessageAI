@@ -17,12 +17,14 @@ export function usePresence(conversationId: string) {
 	const db = useSQLiteContext();
 
 	useEffect(() => {
+		// Reset presence state when conversation changes
+		setOnlineUserIds(new Set());
+		
 		// Handle all WebSocket messages
 		const unsubscribeMessage = wsClient.onMessage((message: ServerMessage) => {
 			// Handle initial connection - receive list of already online users
 			if (message.type === 'connected' && message.onlineUserIds) {
 				setOnlineUserIds(new Set(message.onlineUserIds));
-				console.log('🟢 Initial online users:', message.onlineUserIds);
 			}
 			
 			// Handle presence updates
@@ -32,10 +34,8 @@ export function usePresence(conversationId: string) {
 					
 					if (message.status === 'online') {
 						newSet.add(message.userId);
-						console.log(`🟢 User ${message.userId} is now online`);
 					} else if (message.status === 'offline') {
 						newSet.delete(message.userId);
-						console.log(`⚫ User ${message.userId} is now offline`);
 					}
 					
 					return newSet;
@@ -46,10 +46,16 @@ export function usePresence(conversationId: string) {
 					.catch(err => console.error('Failed to update presence in DB:', err));
 			}
 		});
+		
+		// Reset presence on disconnect
+		const unsubscribeDisconnect = wsClient.onDisconnected(() => {
+			setOnlineUserIds(new Set());
+		});
 
 		// Clean up on unmount
 		return () => {
 			unsubscribeMessage();
+			unsubscribeDisconnect();
 		};
 	}, [conversationId, db]);
 
@@ -89,7 +95,6 @@ async function updatePresenceInDB(
 		);
 	} catch (error) {
 		// Silently fail - presence is not critical
-		console.log('Note: Presence not saved to DB');
 	}
 }
 

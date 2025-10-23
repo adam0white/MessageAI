@@ -180,8 +180,6 @@ async function migrateDbIfNeeded(db: any) {
 				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 			);
 		`);
-
-		console.log('Database initialized successfully');
 	} catch (error) {
 		console.error('Error initializing database:', error);
 		throw error;

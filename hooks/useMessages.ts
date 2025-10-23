@@ -1,10 +1,3 @@
-/**
- * useMessages Hook
- * 
- * React Query hook for managing messages with optimistic updates
- * Implements: optimistic SQLite write → UI update → WebSocket send → server confirmation → status update
- */
-
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useCallback } from 'react';
@@ -47,7 +40,6 @@ export function useMessages(conversationId: string) {
 	useEffect(() => {
 		const requestHistory = () => {
 			if (wsClient.isConnected()) {
-				console.log(`📥 Requesting message history for ${conversationId}`);
 				wsClient.send({
 					type: 'get_history',
 					conversationId,
@@ -67,7 +59,7 @@ export function useMessages(conversationId: string) {
 			unsubscribeConnected();
 			unsubscribeReconnected();
 		};
-	}, [conversationId]);
+	}, [conversationId, queryClient]);
 
 	// Mutation for sending messages with optimistic updates
 	const sendMessageMutation = useMutation({
@@ -144,8 +136,6 @@ export function useMessages(conversationId: string) {
 		const unsubscribe = wsClient.onMessage(async (message: ServerMessage) => {
 			try {
 				if (message.type === 'message_status') {
-					console.log(`📨 Message status update: ${message.clientId || message.messageId} -> ${message.status}`);
-					
 					if (message.clientId) {
 						// Update optimistic message with server ID and status
 						await updateMessageByClientId(db, message.clientId, {
@@ -182,8 +172,6 @@ export function useMessages(conversationId: string) {
 					const incomingMessage = message.message;
 					
 					if (incomingMessage.conversationId === conversationId) {
-						console.log(`📩 New message received: ${incomingMessage.id}`);
-						
 						// Check if message already exists (prevent duplicates)
 						const exists = queryClient.getQueryData<Message[]>(['messages', conversationId])
 							?.some(msg => msg.id === incomingMessage.id || msg.clientId === incomingMessage.id);
@@ -197,31 +185,35 @@ export function useMessages(conversationId: string) {
 						}
 					}
 				} else if (message.type === 'history_response') {
-					console.log(`📚 History received: ${message.messages.length} messages`);
-					
-					// Get current messages to check for duplicates
+					// Get current messages to check for duplicates and status updates
 					const currentMessages = queryClient.getQueryData<Message[]>(['messages', conversationId]) || [];
 					const currentIds = new Set(currentMessages.map(m => m.id));
 					const currentClientIds = new Set(currentMessages.map(m => m.clientId).filter(Boolean));
 					
-					// Only insert messages that don't already exist
 					let newCount = 0;
+					let updatedCount = 0;
+					
 					for (const msg of message.messages) {
-						// Skip if we already have this message (by ID or clientId)
-						if (!currentIds.has(msg.id) && !currentClientIds.has(msg.id)) {
+						// Check if message already exists
+						if (currentIds.has(msg.id) || currentClientIds.has(msg.id)) {
+							// Message exists - check if status changed (read receipts while offline)
+							const existingMsg = currentMessages.find(m => m.id === msg.id || m.clientId === msg.id);
+							if (existingMsg && existingMsg.status !== msg.status) {
+								await updateMessageStatusQuery(db, msg.id, msg.status).catch(() => {});
+								updatedCount++;
+							}
+						} else {
+							// New message - insert it
 							await insertMessage(db, msg).catch(() => {});
 							newCount++;
 						}
 					}
 					
-					console.log(`📚 Inserted ${newCount} new messages from history`);
-					
-					// Invalidate to refresh from DB with all history
-					if (newCount > 0) {
+					// Invalidate to refresh from DB
+					if (newCount > 0 || updatedCount > 0) {
 						queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
 					}
 				} else if (message.type === 'message_read') {
-					console.log(`👁️ Message read: ${message.messageId} by ${message.userId}`);
 					
 					await updateMessageStatusQuery(db, message.messageId, 'read')
 						.catch(err => console.error('useMessages: Failed to update read status:', err));

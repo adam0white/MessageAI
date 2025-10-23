@@ -16,6 +16,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { useAuthStore } from '../lib/stores/auth';
 import { useQueryClient } from '@tanstack/react-query';
+import { upsertConversation } from '../lib/db/queries';
 
 const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'http://localhost:8787';
 const POLLING_INTERVAL = 3000; // 3 seconds
@@ -24,6 +25,7 @@ const POLLING_INTERVAL = 3000; // 3 seconds
 Notifications.setNotificationHandler({
 	handleNotification: async () => ({
 		shouldShowBanner: true,
+		shouldShowList: true,
 		shouldPlaySound: true,
 		shouldSetBadge: false,
 	}),
@@ -61,14 +63,14 @@ export function useGlobalMessages() {
 				const { status: existingStatus } = await Notifications.getPermissionsAsync();
 				let finalStatus = existingStatus;
 
-				if (existingStatus !== 'granted') {
-					const { status } = await Notifications.requestPermissionsAsync();
-					finalStatus = status;
-				}
+			if (existingStatus !== 'granted') {
+				const { status } = await Notifications.requestPermissionsAsync();
+				finalStatus = status;
+			}
 
-				if (finalStatus === 'granted') {
-					setPermissionsGranted(true);
-				}
+			if (finalStatus === 'granted') {
+				setPermissionsGranted(true);
+			}
 			} catch (error) {
 				console.error('Failed to request notification permissions:', error);
 			}
@@ -96,45 +98,70 @@ export function useGlobalMessages() {
 				const response = await fetch(`${WORKER_URL}/api/conversations?userId=${userId}`);
 				if (!response.ok) return;
 
-				const data = await response.json();
-				const conversations = data.conversations || [];
-				const now = Date.now();
+			const data = await response.json();
+			const conversations = data.conversations || [];
+			const now = Date.now();
 
-				for (const conv of conversations) {
-					// Skip active conversation
-					if (conv.id === activeConversationId.current) continue;
+			// Trigger notification for new activity
+			let hasNewActivity = false;
 
-					// Check if there's activity in this conversation
-					if (conv.lastMessageAt) {
-						const messageTime = new Date(conv.lastMessageAt).getTime();
-						const notificationId = `${conv.id}_${conv.lastMessageAt}`;
+			for (const conv of conversations) {
+				// Skip active conversation
+				if (conv.id === activeConversationId.current) continue;
+
+				// Check if there's activity in this conversation
+				if (conv.lastMessageAt) {
+					const messageTime = new Date(conv.lastMessageAt).getTime();
+					const notificationId = `${conv.id}_${conv.lastMessageAt}`;
+					
+				// Only show notification for activity newer than last check
+				if (messageTime > lastCheckedTimestamp.current) {
+					// Skip if already notified
+					if (notifiedMessageIds.current.has(notificationId)) continue;
+
+					// Skip if the last message was sent by current user (don't notify about own messages)
+					if (conv.lastMessage?.senderId === userId) continue;
+
+					hasNewActivity = true;
+
+					// Get sender name for notification
+					const sender = conv.participants?.find((p: any) => p.userId === conv.lastMessage?.senderId);
+					const senderName = sender?.name || sender?.user?.name || 'Someone';
+					const messagePreview = conv.lastMessage?.content || 'New message';
+
+						// Format notification based on conversation type
+						const title = conv.type === 'group' 
+							? (conv.name || 'Group Chat')
+							: senderName;
 						
-						// Only show notification for activity newer than last check
-						if (messageTime > lastCheckedTimestamp.current) {
-							// Skip if already notified
-							if (notifiedMessageIds.current.has(notificationId)) continue;
+						const body = conv.type === 'group'
+							? `${senderName}: ${messagePreview}`
+							: messagePreview;
 
-							// Show local notification
-							await Notifications.scheduleNotificationAsync({
-								content: {
-									title: conv.name || 'New Message',
-									body: 'You have a new message',
-									data: {
-										conversationId: conv.id,
-										messageId: notificationId,
-										type: 'new_message',
-									},
-									sound: 'default',
+						// Show local notification with sender and message content
+						await Notifications.scheduleNotificationAsync({
+							content: {
+								title,
+								body,
+								data: {
+									conversationId: conv.id,
+									messageId: notificationId,
+									type: 'new_message',
 								},
-								trigger: null,
-							});
+								sound: 'default',
+							},
+							trigger: null,
+						});
 
-							notifiedMessageIds.current.add(notificationId);
-						}
+						notifiedMessageIds.current.add(notificationId);
 					}
 				}
+			}
 
-				lastCheckedTimestamp.current = now;
+			// Always invalidate query to keep list fresh
+			queryClient.invalidateQueries({ queryKey: ['conversations', userId] });
+
+			lastCheckedTimestamp.current = now;
 			} catch (error) {
 				console.error('Failed to poll for messages:', error);
 			}
@@ -144,7 +171,7 @@ export function useGlobalMessages() {
 		const interval = setInterval(pollForNewMessages, POLLING_INTERVAL);
 
 		return () => clearInterval(interval);
-	}, [userId, permissionsGranted]);
+	}, [userId, permissionsGranted, queryClient]);
 
 	// Handle notification taps
 	useEffect(() => {

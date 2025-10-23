@@ -122,6 +122,9 @@ export async function upsertConversation(
 			[conversation.id, participant.userId, participant.joinedAt, participant.role]
 		);
 	}
+
+	// Don't insert preview messages (they have ID starting with "preview_")
+	// Only insert real messages that were fetched from the DO
 }
 
 export async function getConversationById(
