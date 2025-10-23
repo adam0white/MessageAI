@@ -3,6 +3,15 @@
 dist/
 web-build/
 
+# Native builds (managed by EAS)
+android/
+ios/
+
+# Sensitive credentials
+*.jks
+*.keystore
+GoogleService-Info.plist
+
 # Node
 node_modules/
 npm-debug.log*

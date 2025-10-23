@@ -11,6 +11,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { useEffect } from 'react';
 import { useNetworkMonitor } from '../../hooks/useNetworkMonitor';
 import { useAuthStore } from '../../lib/stores/auth';
+import { useGlobalMessages } from '../../hooks/useGlobalMessages';
 
 export default function AppLayout() {
 	const { isSignedIn, isLoaded, userId } = useAuth();
@@ -27,6 +28,9 @@ export default function AppLayout() {
 
 	// Monitor network connectivity and sync offline messages
 	useNetworkMonitor();
+
+	// Listen for messages from all conversations and show local notifications
+	useGlobalMessages();
 
 	if (!isLoaded) {
 		return (

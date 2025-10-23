@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "440097534083",
+    "project_id": "gauntlet-475918",
+    "storage_bucket": "gauntlet-475918.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:440097534083:android:eb2b1c3a79e9c70fc1abb6",
+        "android_client_info": {
+          "package_name": "com.messageai.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD3KmUeJor37LWPImCpbwUHUZyy1sN0iv0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

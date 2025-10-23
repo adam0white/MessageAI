@@ -1,10 +1,10 @@
 # Active Context: MessageAI
 
 **Last Updated**: 2025-10-22  
-**Phase**: Phase 3.0 COMPLETE ✅
+**Phase**: Phase 4.0 COMPLETE ✅ (Foreground Notifications via Local Notifications + Polling)
 
 ## Current Status
-Phase 3.0 validated and complete! All features tested on real devices (iOS simulator + Android physical device):
+Phase 4.0 foreground notifications working via polling + local notifications (no FCM needed for MVP):
 - ✅ Group chat with 3+ participants working
 - ✅ Presence tracking (online count) working across all chat types  
 - ✅ Message status: gray ○ → gray ✓ → gray ✓✓ → green ✓✓ (read)
@@ -27,9 +27,11 @@ Phase 3.0 validated and complete! All features tested on real devices (iOS simul
 
 ## Production Deployment
 - **Worker URL**: https://messageai-worker.abdulisik.workers.dev
-- **D1 Database**: Migrated and operational
-- **Durable Objects**: SQLite enabled via `new_sqlite_classes`
+- **Latest Version**: ed366cec (Phase 4 - Foreground Notifications)
+- **D1 Database**: Migrated with push_tokens table, lastMessageAt tracking enabled
+- **Durable Objects**: SQLite enabled, D1 timestamp updates on new messages
 - **WebSocket**: wss:// secure connections working
+- **Foreground Notifications**: Polling + local notifications (working!)
 - **Monitoring**: wrangler tail running for live logs
 
 ## Key Decisions Made
@@ -78,7 +80,47 @@ Phase 3.0 validated and complete! All features tested on real devices (iOS simul
 21. **Auto-mark-as-read**: When user opens chat, all unread messages automatically marked as read via WebSocket. Prevents manual marking and provides instant feedback to senders (if they're connected).
 22. **Presence Shows Other Users, Not Self**: Online indicator should show OTHER participants' status, not your own connection state. For all chat types, show "X online" count (excludes yourself).
 
-## Recent Changes (Phase 3.0 - COMPLETE & VALIDATED)
+### Phase 4 Learnings (Notifications - CRITICAL)
+23. **Foreground vs Background Notifications**: For foreground notifications (app open), local notifications + polling is simpler and more reliable than FCM. FCM only needed for background/closed app scenarios.
+24. **Polling is Acceptable for MVP**: 3-second polling for conversation list is lightweight and provides notification UX without FCM complexity. Can upgrade to global WebSocket or FCM later.
+25. **Per-Conversation WebSocket Limitation**: Current architecture (one WS per open chat) means users on conversation list aren't connected to ANY chat. Need global user WebSocket or polling for notifications. Chose polling for MVP simplicity.
+26. **Local Notifications Work Everywhere**: `Notifications.scheduleNotificationAsync` with `trigger: null` works in Expo Go, dev builds, and production without any special setup.
+27. **ExponentPushToken vs ExpoPushToken**: ExponentPushToken = legacy Expo service (unreliable). ExpoPushToken = FCM (reliable). If seeing Exponent prefix, FCM isn't configured properly.
+28. **FCM is Complex**: FCM requires google-services.json, service account JSON, proper manifest configuration, and production builds. Too complex for MVP foreground-only notifications.
+29. **Test Local Notifications First**: Before debugging FCM, always test if local notifications work. If they do, FCM/config issue. If they don't, device/permissions issue.
+
+## Recent Changes (Phase 4.0 - FOREGROUND NOTIFICATIONS)
+
+**Final Implementation (Polling + Local Notifications - WORKING!):**
+- ✅ Created `hooks/useGlobalMessages.ts` - Polls `/api/conversations` every 3s
+- ✅ Uses `lastMessageAt` timestamp to detect new activity
+- ✅ Shows local notifications via `Notifications.scheduleNotificationAsync`
+- ✅ Notification tap navigation to correct conversation
+- ✅ Works without FCM (Expo Go, dev builds, production)
+- ✅ Durable Objects update D1 `lastMessageAt` on every new message
+- ✅ Validated on physical Android device + emulator
+
+**Key Bug Fixes:**
+- 🐛 Durable Objects weren't updating `lastMessageAt` in D1 - Fixed
+- 🐛 API returned `Conversation` not `ConversationPreview` (no lastMessage) - Worked around using lastMessageAt
+- 🐛 Notification permissions not requested in final implementation - Fixed in useGlobalMessages
+- 🐛 Deprecated `shouldShowAlert` API - Updated to `shouldShowBanner`
+
+**Attempted Approaches (Learning Process):**
+- ✅ Installed expo-notifications, expo-device, expo-constants packages
+- ✅ Created `hooks/useNotifications.ts` for permission management and token registration
+- ✅ Configured `app.json` with notification plugin and project ID
+- ✅ Set up foreground notification handler (alerts + sounds)
+- ✅ Implemented Android notification channels (MAX importance)
+- ✅ Added notification tap handler for navigation
+- ✅ Created `worker/src/handlers/push-tokens.ts` for token CRUD
+- ✅ Created `worker/src/handlers/notifications.ts` for Expo Push API integration
+- ✅ Updated Durable Object with offline user detection
+- ✅ Implemented smart push notification routing (online vs offline)
+- ✅ Added user info lookup for notification sender names
+- ✅ Deployed backend version b9acd9af with full push support
+
+## Previous Changes (Phase 3.0 - COMPLETE & VALIDATED)
 - ✅ SHA-256 conversation ID hashing for scalable groups (3+ participants)
 - ✅ Simplified conversation creation (single UI, auto-detects type, name optional for all)
 - ✅ Sender name attribution in MessageBubble component for group chats
@@ -95,6 +137,17 @@ Phase 3.0 validated and complete! All features tested on real devices (iOS simul
 - ✅ Tested on real devices: iOS simulator + Android physical device
 
 ## Files to Note
+
+### Phase 4 New Files
+- `hooks/useGlobalMessages.ts`: Polling-based foreground notifications (works without FCM)
+- `worker/src/handlers/push-tokens.ts`: Token registration/deletion API endpoints (for future FCM)
+- `worker/src/handlers/notifications.ts`: Expo Push API integration (for future FCM)
+
+### Phase 4 Updated Files
+- `app.json`: Added notification plugin, google-services.json path, EAS project ID
+- `app/(app)/_layout.tsx`: Integrated useGlobalMessages hook
+- `worker/src/index.ts`: Added push token API routes (for future FCM)
+- `worker/src/durable-objects/Conversation.ts`: Updates D1 lastMessageAt on new messages, offline detection
 
 ### Phase 3 New Files
 - `shared/utils.ts`: SHA-256 hashing utilities for conversation IDs
@@ -126,10 +179,33 @@ See `systemPatterns.md` for detailed notes on:
 - Background message strategy: Push notifications (Phase 4)
 - Single vs multiple WebSocket connections
 
-## Known Limitations (Require Phase 4)
-1. **Read receipts only work when sender is online**: Sender must have chat open to receive read receipt updates. When sender closes chat and recipient reads message, sender never sees green checkmarks. **Fix**: Push notifications to update status even when disconnected.
-2. **Background messages require chat to be open**: Messages only received when chat screen is active. **FixMenuPhase 4 push notifications.
-3. **Old DO messages persist**: Clearing D1 doesn't clear DO storage. Same conversation ID = old messages reappear. **Fix**: Implement conversation deletion endpoint with `ctx.storage.deleteAll()`.
+## Known Limitations (Phase 4.0 - Foreground Polling)
+1. **Polling-based (3s interval)**: Notifications have 0-3 second delay. **Future**: Upgrade to global user WebSocket for instant notifications.
+2. **Foreground only**: App must be open to receive notifications. **Future**: Add FCM for background/closed app notifications.
+3. **Generic notification body**: Shows "You have a new message" instead of actual content (messages stored in DO, not D1). **Future**: Fetch from DO or denormalize to D1.
+4. **Old DO messages persist**: Clearing D1 doesn't clear DO storage. Same conversation ID = old messages reappear. **Fix**: Implement conversation deletion endpoint with `ctx.storage.deleteAll()`.
 
 ## Next Session Priority
-Phase 4: Push Notifications & Final MVP Deployment
+Phase 4.5-4.7: Final MVP deployment and documentation
+
+## Phase 4.0 Summary (COMPLETE ✅)
+
+**What Works:**
+- ✅ Foreground notifications via polling + local notifications
+- ✅ 3-second polling detects new messages using `lastMessageAt` timestamp
+- ✅ Notifications show when user is on conversation list or in different chat
+- ✅ Tap notification navigates to correct conversation
+- ✅ Works on physical devices and emulators
+- ✅ No FCM complexity needed for MVP
+
+**Architecture:**
+- Durable Objects update `lastMessageAt` in D1 on every new message
+- Frontend polls `/api/conversations` every 3s
+- Compares timestamps to detect new activity
+- Shows local notification via `Notifications.scheduleNotificationAsync`
+- Deduplicates using Set of notification IDs
+
+**What Doesn't Work (By Design):**
+- Background notifications (app closed) - requires FCM
+- Instant notifications (polling has 0-3s delay) - requires global WebSocket
+- Message preview in notification (content in DO) - requires denormalization or DO fetch

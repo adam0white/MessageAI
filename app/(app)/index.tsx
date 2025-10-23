@@ -28,11 +28,9 @@ export default function ConversationListScreen() {
 
 	async function handleSignOut() {
 		try {
-			// Clear local database before signing out
 			await clearAllData(db);
-			console.log('✅ Database cleared on logout');
 		} catch (error) {
-			console.error('⚠️ Failed to clear database on logout:', error);
+			console.error('Failed to clear database on logout:', error);
 		}
 		
 		await signOut();

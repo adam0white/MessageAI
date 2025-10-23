@@ -12,6 +12,10 @@ import {
 	handleGetConversations, 
 	handleGetConversation 
 } from './handlers/conversations';
+import { 
+	handleRegisterPushToken, 
+	handleDeletePushToken 
+} from './handlers/push-tokens';
 
 export { Conversation };
 
@@ -69,6 +73,20 @@ export default {
 			const conversationId = url.pathname.split('/')[3];
 			if (conversationId && request.method === 'GET') {
 				const response = await handleGetConversation(request, env, conversationId);
+				return addCorsHeaders(response);
+			}
+		}
+
+		// Push token endpoints
+		if (url.pathname === '/api/push-tokens' && request.method === 'POST') {
+			const response = await handleRegisterPushToken(request, env);
+			return addCorsHeaders(response);
+		}
+
+		if (url.pathname.startsWith('/api/push-tokens/')) {
+			const token = decodeURIComponent(url.pathname.split('/')[3]);
+			if (token && request.method === 'DELETE') {
+				const response = await handleDeletePushToken(token, env);
 				return addCorsHeaders(response);
 			}
 		}

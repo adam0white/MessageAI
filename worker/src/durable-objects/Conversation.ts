@@ -1,5 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { ClientMessage, ServerMessage, Message } from '../types';
+import { getPushTokensByUserId, updateConversationLastMessage } from '../db/schema';
+import { sendMessageNotification, sendReadReceiptNotification } from '../handlers/notifications';
 
 /**
  * Session metadata for each connected WebSocket
@@ -289,6 +291,9 @@ export class Conversation extends DurableObject<Env> {
 			// Save to SQLite storage
 			await this.saveMessage(newMessage);
 
+			// Update lastMessageAt in D1 for conversation list polling
+			await updateConversationLastMessage(this.env.DB, session.conversationId, now);
+
 			// Send confirmation to sender
 			const confirmationResponse: ServerMessage = {
 				type: 'message_status',
@@ -305,6 +310,9 @@ export class Conversation extends DurableObject<Env> {
 				message: newMessage,
 			};
 			const recipientsCount = this.broadcast(broadcastMessage, session.userId);
+			
+			// Send push notifications to offline participants
+			await this.sendPushNotificationsForMessage(newMessage, session.userId);
 			
 			// If message was successfully delivered to at least one recipient, mark as delivered
 			if (recipientsCount > 0) {
@@ -351,6 +359,9 @@ export class Conversation extends DurableObject<Env> {
 				readAt: new Date().toISOString(),
 			};
 			this.broadcast(readEvent);
+
+			// Send push notification to offline message sender
+			await this.sendPushNotificationsForReadReceipt(data.messageId, data.userId, session.conversationId);
 
 			console.log(`Read receipt for message ${data.messageId} by user ${data.userId}`);
 		} catch (error) {
@@ -595,6 +606,141 @@ export class Conversation extends DurableObject<Env> {
 			messageId
 		);
 		return await cursor.toArray() as unknown as ReadReceiptRow[];
+	}
+
+	/**
+	 * Send push notifications to offline participants for new message
+	 */
+	private async sendPushNotificationsForMessage(message: Message, senderId: string): Promise<void> {
+		try {
+			// Get all participants from D1
+			const participants = await this.getConversationParticipants(message.conversationId);
+			
+			// Get currently connected user IDs
+			const connectedUserIds = new Set(this.getConnectedUserIds());
+			
+			// Find offline participants (excluding the sender)
+			const offlineParticipants = participants.filter(
+				p => p !== senderId && !connectedUserIds.has(p)
+			);
+			
+			if (offlineParticipants.length === 0) {
+				console.log('📱 No offline participants to notify');
+				return;
+			}
+			
+			console.log(`📱 Sending push notifications to ${offlineParticipants.length} offline participant(s)`);
+			
+			// Get push tokens for all offline participants
+			const allTokens: string[] = [];
+			for (const userId of offlineParticipants) {
+				const tokens = await getPushTokensByUserId(this.env.DB, userId);
+				allTokens.push(...tokens.map(t => t.token));
+			}
+			
+			if (allTokens.length === 0) {
+				console.log('📱 No push tokens found for offline participants');
+				return;
+			}
+			
+			// Get sender info for notification
+			const senderInfo = await this.getUserInfo(senderId);
+			const senderName = senderInfo?.name || 'Someone';
+			
+			// Send push notifications
+			await sendMessageNotification(allTokens, message, senderName);
+			console.log(`✅ Sent push notifications to ${allTokens.length} device(s)`);
+		} catch (error) {
+			console.error('❌ Failed to send push notifications for message:', error);
+			// Don't throw - push notification failures shouldn't break message sending
+		}
+	}
+	
+	/**
+	 * Send push notifications for read receipt to offline message sender
+	 */
+	private async sendPushNotificationsForReadReceipt(
+		messageId: string, 
+		readerId: string, 
+		conversationId: string
+	): Promise<void> {
+		try {
+			// Get the message to find the sender
+			const messages = await this.getMessages(conversationId, 100);
+			const message = messages.find(m => m.id === messageId);
+			
+			if (!message) {
+				console.log('Message not found for read receipt notification');
+				return;
+			}
+			
+			// Check if sender is online
+			const connectedUserIds = new Set(this.getConnectedUserIds());
+			if (connectedUserIds.has(message.senderId)) {
+				console.log('📱 Sender is online, skipping read receipt push notification');
+				return;
+			}
+			
+			console.log(`📱 Sending read receipt push notification to offline sender ${message.senderId}`);
+			
+			// Get push tokens for the sender
+			const tokens = await getPushTokensByUserId(this.env.DB, message.senderId);
+			
+			if (tokens.length === 0) {
+				console.log('📱 No push tokens found for message sender');
+				return;
+			}
+			
+			// Get reader info
+			const readerInfo = await this.getUserInfo(readerId);
+			const readerName = readerInfo?.name || 'Someone';
+			
+			// Send push notifications
+			await sendReadReceiptNotification(
+				tokens.map(t => t.token),
+				messageId,
+				conversationId,
+				readerName
+			);
+			console.log(`✅ Sent read receipt notification to ${tokens.length} device(s)`);
+		} catch (error) {
+			console.error('❌ Failed to send push notifications for read receipt:', error);
+			// Don't throw - push notification failures shouldn't break read receipt flow
+		}
+	}
+	
+	/**
+	 * Get conversation participants from D1
+	 */
+	private async getConversationParticipants(conversationId: string): Promise<string[]> {
+		try {
+			const result = await this.env.DB
+				.prepare('SELECT user_id FROM conversation_participants WHERE conversation_id = ?')
+				.bind(conversationId)
+				.all<{ user_id: string }>();
+			
+			return (result.results || []).map(row => row.user_id);
+		} catch (error) {
+			console.error('Failed to get conversation participants:', error);
+			return [];
+		}
+	}
+	
+	/**
+	 * Get user info from D1 (for notification display names)
+	 */
+	private async getUserInfo(userId: string): Promise<{ name?: string } | null> {
+		try {
+			const result = await this.env.DB
+				.prepare('SELECT name FROM users WHERE id = ?')
+				.bind(userId)
+				.first<{ name: string | null }>();
+			
+			return result ? { name: result.name || undefined } : null;
+		} catch (error) {
+			console.error('Failed to get user info:', error);
+			return null;
+		}
 	}
 
 	/**

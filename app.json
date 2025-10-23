@@ -24,7 +24,8 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.messageai.app"
+      "package": "com.messageai.app",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -33,7 +34,26 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-web-browser"
-    ]
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff",
+          "sounds": [],
+          "mode": "production"
+        }
+      ]
+    ],
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#ffffff"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3e671642-bc8d-4e1d-93ec-eebd81e1261f"
+      }
+    }
   }
 }
