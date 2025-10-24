@@ -25,7 +25,7 @@ import { useNetworkStore } from '../../../lib/stores/network';
 
 const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'https://messageai-worker.abdulisik.workers.dev';
 
-type AiFeature = 'ask' | 'summarize' | 'actions' | 'priority' | 'decisions' | 'search';
+type AiFeature = 'ask' | 'summarize' | 'actions' | 'priority' | 'decisions' | 'search' | 'planner';
 
 interface SummaryResult {
 	summary: string;
@@ -65,6 +65,14 @@ interface SearchResult {
 	snippet: string;
 }
 
+interface AgentProgress {
+	currentStep: string;
+	message: string;
+	completed: boolean;
+	error?: string;
+	data?: any;
+}
+
 export default function ChatScreen() {
 	const { id } = useLocalSearchParams<{ id: string }>();
 	const conversationId = id!;
@@ -87,6 +95,11 @@ export default function ChatScreen() {
 	const [decisions, setDecisions] = useState<Decision[]>([]);
 	const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 	const [showResultsModal, setShowResultsModal] = useState(false);
+	
+	// Agent states
+	const [agentGoal, setAgentGoal] = useState('');
+	const [agentProgress, setAgentProgress] = useState<AgentProgress | null>(null);
+	const [isRunningAgent, setIsRunningAgent] = useState(false);
 	
 	const flatListRef = useRef<FlatList>(null);
 	const previousMessageCountRef = useRef(0);
@@ -354,6 +367,122 @@ export default function ChatScreen() {
 		}
 	};
 
+	const handleRunAgent = async () => {
+		if (!agentGoal.trim()) {
+			Alert.alert('Error', 'Please enter an event planning goal');
+			return;
+		}
+
+		setIsRunningAgent(true);
+		setAgentProgress(null);
+		const goal = agentGoal.trim();
+
+		try {
+			// Call the agent endpoint - this triggers the workflow
+			const response = await fetch(`${WORKER_URL}/api/conversations/${conversationId}/run-agent`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ goal, userId }),
+			});
+
+			const result = await response.json();
+
+			if (result.success) {
+				// Update agent progress
+				setAgentProgress({
+					currentStep: result.currentStep,
+					message: result.message,
+					completed: result.completed || false,
+					data: result.data,
+				});
+
+				// If not complete, continue calling agent to execute next steps
+				if (!result.completed && result.nextStep) {
+					// Wait a bit for agent to save state, then continue
+					setTimeout(() => {
+						continueAgent();
+					}, 1000);
+				} else if (result.completed) {
+					setAgentGoal(''); // Clear goal on completion
+					setShowResultsModal(true); // Show final plan
+				}
+			} else {
+				Alert.alert('Error', result.error || 'Agent failed');
+				setAgentProgress({
+					currentStep: 'failed',
+					message: result.error || 'Agent encountered an error',
+					completed: true,
+					error: result.error,
+				});
+			}
+		} catch (error) {
+			console.error('Agent error:', error);
+			Alert.alert('Error', 'Failed to run event planning agent');
+			setAgentProgress({
+				currentStep: 'failed',
+				message: 'Failed to connect to agent',
+				completed: true,
+				error: String(error),
+			});
+		} finally {
+			setIsRunningAgent(false);
+		}
+	};
+
+	const continueAgent = async () => {
+		if (!userId || !agentGoal.trim()) return;
+
+		setIsRunningAgent(true);
+
+		try {
+			// Call again with same goal - agent will resume from last state
+			const response = await fetch(`${WORKER_URL}/api/conversations/${conversationId}/run-agent`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ goal: agentGoal, userId }),
+			});
+
+			const result = await response.json();
+
+			if (result.success) {
+				setAgentProgress({
+					currentStep: result.currentStep,
+					message: result.message,
+					completed: result.completed || false,
+					data: result.data,
+				});
+
+				// Continue if not complete
+				if (!result.completed && result.nextStep) {
+					setTimeout(() => {
+						continueAgent();
+					}, 1000);
+				} else if (result.completed) {
+					setAgentGoal('');
+					setShowResultsModal(true);
+				}
+			} else {
+				Alert.alert('Error', result.error || 'Agent step failed');
+				setAgentProgress({
+					currentStep: 'failed',
+					message: result.error || 'Agent encountered an error',
+					completed: true,
+					error: result.error,
+				});
+			}
+		} catch (error) {
+			console.error('Agent continuation error:', error);
+			setAgentProgress({
+				currentStep: 'failed',
+				message: 'Failed to continue agent workflow',
+				completed: true,
+				error: String(error),
+			});
+		} finally {
+			setIsRunningAgent(false);
+		}
+	};
+
 	const scrollToMessage = (messageId: string) => {
 		const messageIndex = messages.findIndex(msg => msg.id === messageId);
 		if (messageIndex !== -1 && flatListRef.current) {
@@ -522,6 +651,15 @@ export default function ChatScreen() {
 									🔍 Search
 								</Text>
 							</TouchableOpacity>
+							
+							<TouchableOpacity
+								style={[styles.featureButton, activeFeature === 'planner' && styles.featureButtonActive]}
+								onPress={() => setActiveFeature('planner')}
+							>
+								<Text style={[styles.featureButtonText, activeFeature === 'planner' && styles.featureButtonTextActive]}>
+									🎉 Planner
+								</Text>
+							</TouchableOpacity>
 						</View>
 						
 						{/* Progress indicator */}
@@ -535,41 +673,78 @@ export default function ChatScreen() {
 							</View>
 						)}
 
-						{/* Input field - only for ask and search features */}
-						{(activeFeature === 'ask' || activeFeature === 'search') && (
+						{/* Input field - for ask, search, and planner features */}
+						{(activeFeature === 'ask' || activeFeature === 'search' || activeFeature === 'planner') && (
 							<>
 								<View style={styles.aiInputRow}>
 									<TextInput
 										style={styles.aiInput}
-										value={aiQuery}
-										onChangeText={setAiQuery}
-										placeholder={activeFeature === 'ask' ? 'Ask a question...' : 'Search messages...'}
+										value={activeFeature === 'planner' ? agentGoal : aiQuery}
+										onChangeText={activeFeature === 'planner' ? setAgentGoal : setAiQuery}
+										placeholder={
+											activeFeature === 'ask' ? 'Ask a question...' :
+											activeFeature === 'search' ? 'Search messages...' :
+											'Plan team lunch next Friday...'
+										}
 										placeholderTextColor="#999"
 										editable={true}
 										autoFocus
+										multiline={activeFeature === 'planner'}
+										numberOfLines={activeFeature === 'planner' ? 2 : 1}
 									/>
 									<TouchableOpacity
 										style={[
 											styles.aiSendButton, 
-											(!aiQuery.trim() || isAskingAi || isEmbedding || isProcessing) && styles.aiSendButtonDisabled
+											(activeFeature === 'ask' && (!aiQuery.trim() || isAskingAi || isEmbedding || isProcessing)) && styles.aiSendButtonDisabled,
+											(activeFeature === 'search' && (!aiQuery.trim() || isProcessing)) && styles.aiSendButtonDisabled,
+											(activeFeature === 'planner' && (!agentGoal.trim() || isRunningAgent)) && styles.aiSendButtonDisabled
 										]}
-										onPress={activeFeature === 'ask' ? handleAskAI : handleSmartSearch}
-										disabled={!aiQuery.trim() || isAskingAi || isEmbedding || isProcessing}
+										onPress={
+											activeFeature === 'ask' ? handleAskAI :
+											activeFeature === 'search' ? handleSmartSearch :
+											handleRunAgent
+										}
+										disabled={
+											(activeFeature === 'ask' && (!aiQuery.trim() || isAskingAi || isEmbedding || isProcessing)) ||
+											(activeFeature === 'search' && (!aiQuery.trim() || isProcessing)) ||
+											(activeFeature === 'planner' && (!agentGoal.trim() || isRunningAgent))
+										}
 									>
-										{(isAskingAi || isEmbedding || isProcessing) ? (
+										{(isAskingAi || isEmbedding || isProcessing || isRunningAgent) ? (
 											<ActivityIndicator size="small" color="#fff" />
 										) : (
 											<Text style={styles.aiSendButtonText}>
-												{activeFeature === 'ask' ? 'Ask' : 'Search'}
+												{activeFeature === 'ask' ? 'Ask' : 
+												 activeFeature === 'search' ? 'Search' :
+												 'Plan'}
 											</Text>
 										)}
 									</TouchableOpacity>
 								</View>
 								
+								{/* Agent progress */}
+								{activeFeature === 'planner' && agentProgress && (
+									<View style={styles.agentProgressContainer}>
+										<Text style={styles.agentProgressStep}>
+											Step: {agentProgress.currentStep}
+										</Text>
+										<Text style={styles.agentProgressMessage}>
+											{agentProgress.message}
+										</Text>
+										{agentProgress.error && (
+											<Text style={styles.agentProgressError}>
+												Error: {agentProgress.error}
+											</Text>
+										)}
+									</View>
+								)}
+								
 								<Text style={styles.aiInputHint}>
 									{isEmbedding ? '⏳ Preparing semantic search...' : 
+									 isRunningAgent ? '🤖 Agent is working through the workflow...' :
 									 activeFeature === 'ask' ? 'Response appears as a message (uses RAG)' :
-									 'Semantic search with relevance ranking'}
+									 activeFeature === 'search' ? 'Semantic search with relevance ranking' :
+									 'Multi-step agent plans team events automatically'}
 								</Text>
 							</>
 						)}
@@ -653,6 +828,7 @@ export default function ChatScreen() {
 								{activeFeature === 'priority' && '⚡ Priority Messages'}
 								{activeFeature === 'decisions' && '🎯 Decisions Tracked'}
 								{activeFeature === 'search' && '🔍 Search Results'}
+								{activeFeature === 'planner' && '🎉 Event Plan'}
 							</Text>
 							<TouchableOpacity onPress={() => setShowResultsModal(false)}>
 								<Text style={styles.modalClose}>✕</Text>
@@ -789,6 +965,51 @@ export default function ChatScreen() {
 										</>
 									)}
 								</>
+							)}
+							
+							{/* Event Planner Results */}
+							{activeFeature === 'planner' && agentProgress && agentProgress.completed && agentProgress.data && (
+								<View style={styles.eventPlan}>
+									<Text style={styles.eventPlanTitle}>
+										{agentProgress.data.venue !== 'N/A' ? '🎉 Event Plan Ready!' : '✅ Meeting Scheduled!'}
+									</Text>
+									
+									<View style={styles.eventDetail}>
+										<Text style={styles.eventLabel}>📅 Event Type:</Text>
+										<Text style={styles.eventValue}>
+											{agentProgress.data.eventType.charAt(0).toUpperCase() + agentProgress.data.eventType.slice(1)}
+										</Text>
+									</View>
+									
+									<View style={styles.eventDetail}>
+										<Text style={styles.eventLabel}>⏰ Date & Time:</Text>
+										<Text style={styles.eventValue}>{agentProgress.data.date} at {agentProgress.data.time}</Text>
+									</View>
+									
+									{/* Only show venue if it's a food event */}
+									{agentProgress.data.venue !== 'N/A' && (
+										<>
+											<View style={styles.eventDetail}>
+												<Text style={styles.eventLabel}>🏪 Venue:</Text>
+												<Text style={styles.eventValue}>{agentProgress.data.venue}</Text>
+											</View>
+											
+											<View style={styles.eventDetail}>
+												<Text style={styles.eventLabel}>📍 Location:</Text>
+												<Text style={styles.eventValue}>{agentProgress.data.location}</Text>
+											</View>
+										</>
+									)}
+									
+									<View style={styles.eventSummary}>
+										<Text style={styles.eventSummaryText}>
+											{agentProgress.data.venue !== 'N/A' 
+												? `The agent has analyzed your conversation and planned this ${agentProgress.data.eventType}. All details have been shared in the chat above.`
+												: `The agent has analyzed your conversation. Check the messages above for suggested times and coordinate with your team.`
+											}
+										</Text>
+									</View>
+								</View>
 							)}
 						</View>
 					</View>
@@ -1207,6 +1428,72 @@ const styles = StyleSheet.create({
 		marginTop: 6,
 		fontStyle: 'italic',
 		textAlign: 'right',
+	},
+	// Agent Progress
+	agentProgressContainer: {
+		backgroundColor: '#f0f8ff',
+		padding: 12,
+		borderRadius: 8,
+		marginTop: 8,
+		borderWidth: 1,
+		borderColor: '#007AFF',
+	},
+	agentProgressStep: {
+		fontSize: 12,
+		fontWeight: '600',
+		color: '#007AFF',
+		marginBottom: 4,
+	},
+	agentProgressMessage: {
+		fontSize: 14,
+		color: '#333',
+		marginBottom: 4,
+	},
+	agentProgressError: {
+		fontSize: 12,
+		color: '#ff3b30',
+		marginTop: 4,
+		fontStyle: 'italic',
+	},
+	// Event Plan
+	eventPlan: {
+		backgroundColor: '#fff',
+	},
+	eventPlanTitle: {
+		fontSize: 20,
+		fontWeight: '700',
+		color: '#007AFF',
+		marginBottom: 20,
+		textAlign: 'center',
+	},
+	eventDetail: {
+		marginBottom: 16,
+		borderBottomWidth: 1,
+		borderBottomColor: '#f0f0f0',
+		paddingBottom: 12,
+	},
+	eventLabel: {
+		fontSize: 13,
+		fontWeight: '600',
+		color: '#666',
+		marginBottom: 6,
+	},
+	eventValue: {
+		fontSize: 16,
+		color: '#333',
+		fontWeight: '500',
+	},
+	eventSummary: {
+		backgroundColor: '#f8f9fa',
+		padding: 16,
+		borderRadius: 8,
+		marginTop: 8,
+	},
+	eventSummaryText: {
+		fontSize: 14,
+		color: '#555',
+		lineHeight: 20,
+		textAlign: 'center',
 	},
 });
 

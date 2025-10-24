@@ -233,10 +233,43 @@ Simple JSON messages over WebSocket:
   - Cost tracking and analytics
   - No local rate limiting code needed
 
-### Agent Pattern (Future)
-- **Proactive Assistant**: Monitors messages, detects patterns (scheduling discussions)
-- **Function calling**: LLM calls tools (extract action items, search conversations)
-- **Workflows**: Long-running tasks don't block Workers
+### Agent Pattern (Implemented ✅ - Phase 7.0)
+
+**Multi-Step Event Planning Agent:**
+- **Workflow**: INIT → AVAILABILITY → (PREFERENCES → VENUES) → CONFIRM → COMPLETE
+- **Conditional Branching**: Simple meetings skip venue steps, food events include full workflow
+- **State Management**: SQLite table in DO stores agent state, step history, errors
+- **One Step Per Call**: Frontend calls `runAgent()` repeatedly until completion
+- **Progress Broadcasting**: Each step sends message to conversation (visible to all)
+- **Error Recovery**: 1 retry per step, graceful degradation
+
+**Event Type Detection:**
+- Reads recent conversation messages for context
+- Extracts `needsVenue` flag (true for lunch/dinner/coffee, false for meetings)
+- Uses structured JSON output from Workers AI
+
+**Availability Analysis:**
+- Scans 50 messages for phrases: "I'm free", "works for me", "I'm busy"
+- Extracts suggested times: "2pm works", "Friday at 3"
+- Returns suggestedTimes array for flexible scheduling
+
+**Venue Suggestions (Food Events Only):**
+- Generates 2 AI-powered venue options (down from 3)
+- Uses area names, not full addresses ("Downtown" not "123 Main St")
+- Temperature 0.7 for creative names, matches team preferences
+- Auto-selects top match, team can override in chat
+
+**Meeting Scheduling (Non-Food Events):**
+- Skips PREFERENCES/VENUES/POLL steps entirely
+- Shows suggested times from availability analysis
+- Prompts team to coordinate final time in chat
+- Completes in 2 steps (INIT → AVAILABILITY → CONFIRM)
+
+**State Persistence:**
+- Each step saves to DO SQLite before continuing
+- Frontend polls every 1s to advance workflow
+- Agent can resume after worker restart
+- Step history tracks all completed actions
 
 ### Phase 6 AI Features (Implemented ✅)
 

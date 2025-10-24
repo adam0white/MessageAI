@@ -333,6 +333,42 @@ export default {
 			}
 		}
 
+		// Multi-Step Agent endpoint
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/run-agent') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { goal: string; userId: string };
+				
+				if (!body.goal || !body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'goal and userId are required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				
+				// Call the runAgent RPC method - this executes ONE step
+				const result = await (stub as any).runAgent(body.goal, body.userId, conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Run agent error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
 		// WebSocket upgrade endpoint - routes to Conversation Durable Object
 		if (url.pathname.startsWith('/conversation/')) {
 			const conversationId = url.pathname.split('/')[2];

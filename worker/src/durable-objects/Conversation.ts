@@ -3,6 +3,21 @@ import type { ClientMessage, ServerMessage, Message } from '../types';
 import { getPushTokensByUserId, updateConversationLastMessage, updateUserLastRead, getLastReadTimestamps } from '../db/schema';
 import { sendMessageNotification, sendReadReceiptNotification } from '../handlers/notifications';
 import { generateEmbedding, AI_MODELS } from '../handlers/ai';
+import {
+	AgentState,
+	AgentWorkflowStep,
+	AgentResponse,
+	ToolCallRequest,
+	ToolCallResult,
+	TeamAvailability,
+	TeamPreferences,
+	VenueOption,
+	PollResults,
+	FinalPlan,
+	AGENT_SYSTEM_PROMPT,
+	WORKFLOW_TRANSITIONS,
+	AGENT_TOOLS,
+} from '../handlers/agent';
 
 /**
  * Session metadata for each connected WebSocket
@@ -100,6 +115,25 @@ export class Conversation extends DurableObject<Env> {
 				read_at TEXT NOT NULL,
 				PRIMARY KEY (message_id, user_id)
 			)
+		`);
+
+		// Agent state table for multi-step workflows
+		await this.ctx.storage.sql.exec(`
+			CREATE TABLE IF NOT EXISTS agent_state (
+				id TEXT PRIMARY KEY,
+				conversation_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				current_step TEXT NOT NULL,
+				goal TEXT NOT NULL,
+				state_json TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)
+		`);
+
+		await this.ctx.storage.sql.exec(`
+			CREATE INDEX IF NOT EXISTS idx_agent_conversation
+			ON agent_state(conversation_id, created_at DESC)
 		`);
 
 		this.sqlInitialized = true;
@@ -808,6 +842,937 @@ ${conversationText}`;
 	}
 
 	/**
+	 * RPC Method: Run Multi-Step Agent
+	 * 
+	 * Executes an autonomous agent for team event planning.
+	 * The agent follows a multi-step workflow:
+	 * 1. Parse user request (event type, date)
+	 * 2. Analyze team availability
+	 * 3. Extract preferences (food, location, budget)
+	 * 4. Suggest venue options
+	 * 5. Create poll for team vote
+	 * 6. Finalize plan based on results
+	 * 
+	 * @param goal - Natural language goal (e.g., "Plan team lunch next Friday")
+	 * @param userId - User who initiated the agent
+	 * @param conversationId - Current conversation
+	 * @returns Agent response with current step and progress
+	 */
+	async runAgent(goal: string, userId: string, conversationId: string): Promise<AgentResponse> {
+		try {
+			await this.initializeSQL();
+
+			// Check if there's an existing agent state for this conversation
+			let agentState = await this.getAgentState(conversationId, goal);
+
+			// If no existing state, create new agent
+			if (!agentState) {
+				agentState = await this.createAgentState(conversationId, userId, goal);
+			}
+
+			// Execute the current workflow step
+			const response = await this.executeAgentStep(agentState);
+
+			// Save updated agent state
+			await this.saveAgentState(agentState);
+
+			// Broadcast agent progress to all participants
+			await this.broadcastAgentProgress(agentState, response);
+
+			return response;
+
+		} catch (error) {
+			return {
+				success: false,
+				currentStep: AgentWorkflowStep.FAILED,
+				message: 'Agent encountered an unexpected error',
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	}
+
+	/**
+	 * Get existing agent state from SQLite
+	 */
+	private async getAgentState(conversationId: string, newGoal?: string): Promise<AgentState | null> {
+		const cursor = this.ctx.storage.sql.exec(
+			`SELECT * FROM agent_state WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1`,
+			conversationId
+		);
+		const rows = await cursor.toArray() as any[];
+
+		if (rows.length === 0) {
+			return null;
+		}
+
+		const row = rows[0];
+		const stateJson = JSON.parse(row.state_json);
+		const currentStep = row.current_step as AgentWorkflowStep;
+		
+		// If completed/failed or different goal, delete old state and return null
+		if (currentStep === AgentWorkflowStep.COMPLETE || 
+		    currentStep === AgentWorkflowStep.FAILED ||
+		    (newGoal && row.goal !== newGoal)) {
+			await this.ctx.storage.sql.exec(
+				`DELETE FROM agent_state WHERE id = ?`,
+				row.id
+			);
+			return null;
+		}
+
+		return {
+			id: row.id,
+			conversationId: row.conversation_id,
+			userId: row.user_id,
+			currentStep: currentStep,
+			goal: row.goal,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+			...stateJson,
+		};
+	}
+
+	/**
+	 * Create new agent state
+	 */
+	private async createAgentState(conversationId: string, userId: string, goal: string): Promise<AgentState> {
+		const now = new Date().toISOString();
+		const agentId = `agent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+		const agentState: AgentState = {
+			id: agentId,
+			conversationId,
+			userId,
+			currentStep: AgentWorkflowStep.INIT,
+			goal,
+			createdAt: now,
+			updatedAt: now,
+			stepHistory: [],
+			errors: [],
+		};
+
+		return agentState;
+	}
+
+	/**
+	 * Save agent state to SQLite
+	 */
+	private async saveAgentState(state: AgentState): Promise<void> {
+		const now = new Date().toISOString();
+		state.updatedAt = now;
+
+		// Separate core fields from JSON state
+		const { id, conversationId, userId, currentStep, goal, createdAt, updatedAt, ...jsonState } = state;
+
+		await this.ctx.storage.sql.exec(
+			`INSERT OR REPLACE INTO agent_state (id, conversation_id, user_id, current_step, goal, state_json, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			id,
+			conversationId,
+			userId,
+			currentStep,
+			goal,
+			JSON.stringify(jsonState),
+			createdAt,
+			updatedAt
+		);
+	}
+
+	/**
+	 * Execute current agent workflow step
+	 */
+	private async executeAgentStep(state: AgentState): Promise<AgentResponse> {
+
+		try {
+			switch (state.currentStep) {
+				case AgentWorkflowStep.INIT:
+					return await this.agentStepInit(state);
+				
+				case AgentWorkflowStep.AVAILABILITY:
+					return await this.agentStepAvailability(state);
+				
+				case AgentWorkflowStep.PREFERENCES:
+					return await this.agentStepPreferences(state);
+				
+				case AgentWorkflowStep.VENUES:
+					return await this.agentStepVenues(state);
+				
+				case AgentWorkflowStep.POLL:
+					return await this.agentStepPoll(state);
+				
+				case AgentWorkflowStep.CONFIRM:
+					return await this.agentStepConfirm(state);
+				
+				case AgentWorkflowStep.COMPLETE:
+					// Already completed - return final plan
+					return {
+						success: true,
+						currentStep: AgentWorkflowStep.COMPLETE,
+						message: state.finalPlan ? 'Event planning complete!' : 'Workflow finished',
+						data: state.finalPlan,
+						completed: true,
+					};
+				
+				case AgentWorkflowStep.FAILED:
+					// Already failed - return error state
+					const lastError = state.errors[state.errors.length - 1];
+					return {
+						success: false,
+						currentStep: AgentWorkflowStep.FAILED,
+						message: 'Agent workflow failed',
+						error: lastError?.error || 'Unknown error',
+						completed: true,
+					};
+				
+				default:
+					return {
+						success: false,
+						currentStep: state.currentStep,
+						message: `Unknown workflow step: ${state.currentStep}`,
+						error: 'Invalid state',
+					};
+			}
+		} catch (error) {
+			console.error(`[Agent] Step ${state.currentStep} failed:`, error);
+			
+			// Record error
+			state.errors.push({
+				step: state.currentStep,
+				timestamp: new Date().toISOString(),
+				error: error instanceof Error ? error.message : 'Unknown error',
+				recoveryAttempted: false,
+			});
+
+			// Attempt recovery (retry once)
+			const canRetry = state.errors.filter(e => e.step === state.currentStep).length < 2;
+			
+			if (canRetry) {
+				console.log(`[Agent] Retrying step ${state.currentStep}`);
+				state.errors[state.errors.length - 1].recoveryAttempted = true;
+				return await this.executeAgentStep(state);
+			}
+
+			// Failed after retry
+			state.currentStep = AgentWorkflowStep.FAILED;
+			return {
+				success: false,
+				currentStep: AgentWorkflowStep.FAILED,
+				message: `Step ${state.currentStep} failed after retry`,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	}
+
+	/**
+	 * Step 1: INIT - Parse user request and extract event details
+	 */
+	private async agentStepInit(state: AgentState): Promise<AgentResponse> {
+
+		// Get recent messages for context
+		const messages = await this.getMessages(state.conversationId, 20);
+		const recentContext = messages.slice(-10)
+			.map(msg => `${msg.senderId}: ${msg.content}`)
+			.join('\n');
+
+		const systemPrompt = `You are analyzing a team event planning request.
+Extract the following information:
+- eventType: "meeting", "lunch", "dinner", "coffee", etc. (use "meeting" if unclear or just scheduling time)
+- needsVenue: true if food/venue is involved, false for simple meetings/calls
+- eventDate: proposed date (convert relative dates to ISO format YYYY-MM-DD, or "flexible" if not specified)
+- eventTime: proposed time (or "flexible" if not specified)
+
+Output JSON format:
+{
+  "eventType": "meeting",
+  "needsVenue": false,
+  "eventDate": "2025-10-31",
+  "eventTime": "2:00 PM"
+}
+
+Be specific. If someone says "quick meeting" or "when can we meet", set needsVenue to false.
+Only set needsVenue to true for food events (lunch, dinner, coffee, etc.).`;
+
+		const userPrompt = `Recent conversation context:
+${recentContext}
+
+User's request: "${state.goal}"
+
+Extract the event details from this request.`;
+
+		// Call Workers AI
+		const aiResponse: any = await (this.env.AI as any).run(
+			AI_MODELS.LLAMA_8B,
+			{
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userPrompt }
+				],
+				max_tokens: 256,
+				temperature: 0.2,
+			},
+			{
+				gateway: {
+					id: 'aw-cf-ai',
+					metadata: {
+						conversationId: state.conversationId,
+						operation: 'agent-init',
+					}
+				}
+			}
+		);
+
+		const responseText = aiResponse.response as string;
+		
+		let needsVenue = false;
+		
+		// Parse JSON response
+		try {
+			const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+			if (jsonMatch) {
+				const parsed = JSON.parse(jsonMatch[0]);
+				state.eventType = parsed.eventType || 'meeting';
+				state.eventDate = parsed.eventDate || 'flexible';
+				state.eventTime = parsed.eventTime || 'flexible';
+				needsVenue = parsed.needsVenue || false;
+			}
+		} catch (parseError) {
+			// Fallback extraction
+			const goalLower = state.goal.toLowerCase();
+			if (goalLower.includes('lunch') || goalLower.includes('dinner') || goalLower.includes('coffee')) {
+				state.eventType = goalLower.includes('lunch') ? 'lunch' : goalLower.includes('dinner') ? 'dinner' : 'coffee';
+				needsVenue = true;
+			} else {
+				state.eventType = 'meeting';
+				needsVenue = false;
+			}
+			state.eventDate = 'flexible';
+			state.eventTime = 'flexible';
+		}
+
+		// Update state with venue flag
+		(state as any).needsVenue = needsVenue;
+
+		// Update state
+		state.currentStep = AgentWorkflowStep.AVAILABILITY;
+		state.stepHistory.push({
+			step: AgentWorkflowStep.INIT,
+			timestamp: new Date().toISOString(),
+			result: 'success',
+			data: { eventType: state.eventType, eventDate: state.eventDate, eventTime: state.eventTime, needsVenue },
+			message: `Planning ${state.eventType}${state.eventDate !== 'flexible' ? ` for ${state.eventDate}` : ''}`,
+		});
+
+		const dateInfo = state.eventDate !== 'flexible' ? ` on ${state.eventDate}` : '';
+		const timeInfo = state.eventTime !== 'flexible' ? ` at ${state.eventTime}` : '';
+
+		return {
+			success: true,
+			currentStep: AgentWorkflowStep.AVAILABILITY,
+			nextStep: AgentWorkflowStep.AVAILABILITY,
+			message: `🎯 Planning ${state.eventType}${dateInfo}${timeInfo}. Analyzing team availability...`,
+		};
+	}
+
+	/**
+	 * Step 2: AVAILABILITY - Analyze conversation for team availability
+	 */
+	private async agentStepAvailability(state: AgentState): Promise<AgentResponse> {
+
+		// Get recent messages
+		const messages = await this.getMessages(state.conversationId, 50);
+		
+		// Format messages for AI analysis
+		const conversationText = messages
+			.map(msg => `[${msg.senderId}]: ${msg.content}`)
+			.join('\n');
+
+		const systemPrompt = `Analyze team availability from conversation messages.
+Look for:
+- Proposed times/dates ("2pm works", "I'm free Thursday", "tomorrow at 3", "earliest I can do is Friday")
+- Availability phrases: "I'm free", "I can make it", "works for me" → available
+- Busy indicators: "I'm busy", "I can't", "not available" → unavailable
+- Tentative: "maybe", "might work", "I'll try" → tentative
+
+Output JSON:
+{
+  "availableMembers": ["user1", "user2"],
+  "unavailableMembers": ["user3"],
+  "maybeMembers": ["user4"],
+  "suggestedTimes": ["2:00 PM Thursday", "Friday 3:00 PM"],
+  "suggestedDates": ["2025-10-30", "2025-10-31"],
+  "conflicts": ["user3 has meeting"],
+  "confidence": 0.8
+}
+
+Extract actual dates/times mentioned in the conversation. Be specific.`;
+
+		const userPrompt = `Analyze availability for "${state.eventType}":\n\n${conversationText.substring(0, 3000)}`;
+
+		const aiResponse: any = await (this.env.AI as any).run(
+			AI_MODELS.LLAMA_8B,
+			{
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userPrompt }
+				],
+				max_tokens: 512,
+				temperature: 0.2,
+			},
+			{
+				gateway: {
+					id: 'aw-cf-ai',
+					metadata: {
+						conversationId: state.conversationId,
+						operation: 'agent-availability',
+					}
+				}
+			}
+		);
+
+		const responseText = aiResponse.response as string;
+		
+		// Parse availability
+		try {
+			const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+			if (jsonMatch) {
+				state.availability = JSON.parse(jsonMatch[0]);
+			}
+		} catch (parseError) {
+			// Fallback
+			state.availability = {
+				availableMembers: [],
+				unavailableMembers: [],
+				maybeMembers: [],
+				suggestedTimes: [],
+				conflicts: [],
+				confidence: 0.3,
+			};
+		}
+
+		// Extract availability for use
+		const availability = state.availability!;
+		
+		// Determine next step based on event type
+		const needsVenue = (state as any).needsVenue || false;
+		const nextStep = needsVenue ? AgentWorkflowStep.PREFERENCES : AgentWorkflowStep.CONFIRM;
+		
+		state.currentStep = nextStep;
+		state.stepHistory.push({
+			step: AgentWorkflowStep.AVAILABILITY,
+			timestamp: new Date().toISOString(),
+			result: 'success',
+			data: availability,
+			message: `Analyzed availability: ${availability.suggestedTimes.length} time slots found`,
+		});
+
+		// Build message
+		let message = '';
+		if (availability.suggestedTimes.length > 0) {
+			message = `✅ Found ${availability.suggestedTimes.length} possible time${availability.suggestedTimes.length > 1 ? 's' : ''}: ${availability.suggestedTimes.slice(0, 2).join(', ')}. `;
+		} else {
+			message = `⚠️ No specific times mentioned yet. `;
+		}
+		
+		if (needsVenue) {
+			message += 'Analyzing venue preferences...';
+		} else {
+			message += 'Finalizing meeting details...';
+		}
+
+		return {
+			success: true,
+			currentStep: nextStep,
+			nextStep: nextStep,
+			message,
+			data: availability,
+		};
+	}
+
+	/**
+	 * Step 3: PREFERENCES - Extract team preferences for food, location, etc.
+	 */
+	private async agentStepPreferences(state: AgentState): Promise<AgentResponse> {
+
+		// Get more messages for preference analysis
+		const messages = await this.getMessages(state.conversationId, 100);
+		
+		const conversationText = messages
+			.map(msg => `[${msg.senderId}]: ${msg.content}`)
+			.join('\n');
+
+		const systemPrompt = `Extract team preferences from conversation messages.
+Look for mentions of:
+- Cuisine types (Italian, Mexican, sushi, etc.)
+- Locations (downtown, near office, specific neighborhoods)
+- Price preferences (cheap, moderate, nice place, etc.)
+- Dietary restrictions (vegetarian, vegan, gluten-free, allergies)
+
+Output JSON:
+{
+  "cuisineTypes": [{"type": "Italian", "count": 2}, {"type": "Mexican", "count": 1}],
+  "locations": [{"location": "Downtown", "count": 3}],
+  "priceRange": "moderate",
+  "dietaryRestrictions": ["vegetarian", "gluten-free"],
+  "confidence": 0.7
+}`;
+
+		const userPrompt = `Extract preferences for team ${state.eventType}:\n\n${conversationText.substring(0, 3000)}`;
+
+		const aiResponse: any = await (this.env.AI as any).run(
+			AI_MODELS.LLAMA_8B,
+			{
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userPrompt }
+				],
+				max_tokens: 512,
+				temperature: 0.2,
+			},
+			{
+				gateway: {
+					id: 'aw-cf-ai',
+					metadata: {
+						conversationId: state.conversationId,
+						operation: 'agent-preferences',
+					}
+				}
+			}
+		);
+
+		const responseText = aiResponse.response as string;
+		
+		// Parse preferences
+		try {
+			const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+			if (jsonMatch) {
+				state.preferences = JSON.parse(jsonMatch[0]);
+			}
+		} catch (parseError) {
+			// Fallback
+			state.preferences = {
+				cuisineTypes: [{ type: 'Any', count: 1 }],
+				locations: [{ location: 'Nearby', count: 1 }],
+				priceRange: 'moderate',
+				dietaryRestrictions: [],
+				confidence: 0.3,
+			};
+		}
+
+		// Extract preferences for use (guaranteed to be set above)
+		const preferences = state.preferences!;
+		
+		// Decide whether to suggest venues or just use top preference
+		const hasStrongPreferences = preferences.cuisineTypes.length > 0 && 
+		                             preferences.cuisineTypes[0].count > 1;
+		
+		// Skip poll step - just pick top 2 venues and let team decide via messages
+		// Move directly to VENUES step
+		state.currentStep = AgentWorkflowStep.VENUES;
+		
+		state.stepHistory.push({
+			step: AgentWorkflowStep.PREFERENCES,
+			timestamp: new Date().toISOString(),
+			result: 'success',
+			data: preferences,
+			message: `Preferences analyzed: ${preferences.cuisineTypes.map(c => c.type).join(', ')}`,
+		});
+
+		const topCuisine = preferences.cuisineTypes[0]?.type || 'various';
+		const topLocation = preferences.locations[0]?.location || 'nearby';
+
+		return {
+			success: true,
+			currentStep: AgentWorkflowStep.VENUES,
+			nextStep: AgentWorkflowStep.VENUES,
+			message: `🍽️ Team prefers ${topCuisine} food in ${topLocation}. Finding venue options...`,
+			data: preferences,
+		};
+	}
+
+	/**
+	 * Step 4: VENUES - Suggest venue options based on preferences
+	 */
+	private async agentStepVenues(state: AgentState): Promise<AgentResponse> {
+
+		const preferences = state.preferences || {
+			cuisineTypes: [{ type: 'Any', count: 1 }],
+			locations: [{ location: 'Nearby', count: 1 }],
+			priceRange: 'moderate',
+			dietaryRestrictions: [],
+			confidence: 0.3,
+		};
+
+		const topCuisine = preferences.cuisineTypes[0]?.type || 'Any';
+		const topLocation = preferences.locations[0]?.location || 'Nearby';
+		const priceRange = preferences.priceRange || 'moderate';
+		const restrictions = preferences.dietaryRestrictions.join(', ') || 'none';
+
+		const systemPrompt = `You are a restaurant recommendation expert.
+Generate 2 realistic venue suggestions based on team preferences.
+
+Output JSON (REQUIRED):
+{
+  "venues": [
+    {
+      "name": "Restaurant Name",
+      "location": "Area/neighborhood only (NOT full address)",
+      "cuisineType": "Italian",
+      "priceRange": "moderate",
+      "matchScore": 0.9,
+      "reason": "Short reason why this fits the team"
+    }
+  ]
+}
+
+IMPORTANT: 
+- Use location like "Downtown", "Mission District", "Near Financial District" - NOT full addresses
+- Generate diverse but realistic restaurant names
+- Provide 2 options only`;
+
+		const userPrompt = `Suggest 2 venues for team ${state.eventType}:
+- Cuisine: ${topCuisine}
+- Location: ${topLocation}
+- Budget: ${priceRange}
+- Dietary needs: ${restrictions}
+
+Generate realistic venue names (no fake addresses).`;
+
+		const aiResponse: any = await (this.env.AI as any).run(
+			AI_MODELS.LLAMA_8B,
+			{
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userPrompt }
+				],
+				max_tokens: 600,
+				temperature: 0.7, // Higher temperature for creative venue names
+			},
+			{
+				gateway: {
+					id: 'aw-cf-ai',
+					metadata: {
+						conversationId: state.conversationId,
+						operation: 'agent-venues',
+					}
+				}
+			}
+		);
+
+		const responseText = aiResponse.response as string;
+		
+		// Parse venues
+		let venues: VenueOption[] = [];
+		try {
+			const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+			if (jsonMatch) {
+				const parsed = JSON.parse(jsonMatch[0]);
+				venues = parsed.venues || [];
+			}
+		} catch (parseError) {
+			console.error('Failed to parse venues:', parseError);
+		}
+
+		// Fallback if no venues generated - provide generic options
+		if (venues.length === 0) {
+			venues = [
+				{
+					name: `${topCuisine} Restaurant`,
+					location: topLocation,
+					cuisineType: topCuisine,
+					priceRange: priceRange,
+					matchScore: 0.8,
+					reason: 'Matches team preferences',
+				},
+				{
+					name: `${topLocation} Cafe`,
+					location: topLocation,
+					cuisineType: 'Casual',
+					priceRange: priceRange,
+					matchScore: 0.7,
+					reason: 'Convenient location',
+				},
+			];
+		}
+
+		// Keep only top 2
+		state.venueOptions = venues.slice(0, 2);
+
+		// Skip POLL step - go directly to CONFIRM
+		state.currentStep = AgentWorkflowStep.CONFIRM;
+		state.stepHistory.push({
+			step: AgentWorkflowStep.VENUES,
+			timestamp: new Date().toISOString(),
+			result: 'success',
+			data: { venues: state.venueOptions },
+			message: `Generated ${state.venueOptions.length} venue options`,
+		});
+
+		// Build message listing venues
+		const venueList = state.venueOptions.map((v, i) => 
+			`${i + 1}. ${v.name} (${v.cuisineType} in ${v.location}) - ${v.reason}`
+		).join('\n');
+
+		return {
+			success: true,
+			currentStep: AgentWorkflowStep.CONFIRM,
+			nextStep: AgentWorkflowStep.CONFIRM,
+			message: `🏪 Here are 2 venue options:\n${venueList}\n\nSelecting top match...`,
+			data: { venues: state.venueOptions },
+		};
+	}
+
+	/**
+	 * Step 5: POLL - Create poll for team to vote on venues
+	 */
+	private async agentStepPoll(state: AgentState): Promise<AgentResponse> {
+
+		const venues = state.venueOptions || [];
+		
+		if (venues.length === 0) {
+			throw new Error('No venue options available for poll');
+		}
+
+		// Create poll (simplified - in production would use actual poll system)
+		const pollId = `poll_${Date.now()}`;
+		const pollQuestion = `Where should we go for ${state.eventType} on ${state.eventDate}?`;
+		
+		const pollOptions = venues.map((venue, idx) => ({
+			id: `option_${idx}`,
+			text: `${venue.name} - ${venue.cuisineType} (${venue.priceRange})`,
+			votes: 0,
+		}));
+
+		state.pollResults = {
+			pollId,
+			question: pollQuestion,
+			options: pollOptions,
+			votes: {},
+			createdAt: new Date().toISOString(),
+		};
+
+		// For demo, auto-select the highest match score venue as "winner"
+		const winnerVenue = venues.reduce((best, current) => 
+			current.matchScore > best.matchScore ? current : best
+		);
+		const winnerOption = pollOptions.find(opt => opt.text.includes(winnerVenue.name));
+		state.pollResults.winner = winnerOption?.id;
+
+		// Move to next step
+		state.currentStep = AgentWorkflowStep.CONFIRM;
+		state.stepHistory.push({
+			step: AgentWorkflowStep.POLL,
+			timestamp: new Date().toISOString(),
+			result: 'success',
+			data: state.pollResults,
+			message: `Poll created with ${pollOptions.length} options`,
+		});
+
+		return {
+			success: true,
+			currentStep: AgentWorkflowStep.CONFIRM,
+			nextStep: AgentWorkflowStep.CONFIRM,
+			message: `📊 Poll created! Top choice: ${winnerVenue.name}. Finalizing plan...`,
+			data: state.pollResults,
+		};
+	}
+
+	/**
+	 * Step 6: CONFIRM - Finalize the event plan
+	 */
+	private async agentStepConfirm(state: AgentState): Promise<AgentResponse> {
+
+		const needsVenue = (state as any).needsVenue || false;
+		const availability = state.availability || {
+			availableMembers: [],
+			unavailableMembers: [],
+			maybeMembers: [],
+			suggestedTimes: [],
+			conflicts: [],
+			confidence: 0,
+		};
+
+		// Determine best time from availability or state
+		let finalDate: string = (state.eventDate && state.eventDate !== 'flexible') ? state.eventDate : 'To be decided';
+		let finalTime: string = (state.eventTime && state.eventTime !== 'flexible') ? state.eventTime : 'To be decided';
+		
+		// Use suggested times from availability if available
+		if (availability.suggestedTimes && availability.suggestedTimes.length > 0) {
+			const firstSuggestion = availability.suggestedTimes[0];
+			// Parse out date if it's in the suggestion
+			if (finalDate === 'To be decided' && firstSuggestion.match(/\d{4}-\d{2}-\d{2}/)) {
+				const dateMatch = firstSuggestion.match(/\d{4}-\d{2}-\d{2}/);
+				if (dateMatch) finalDate = dateMatch[0];
+			}
+			// Parse out time
+			if (finalTime === 'To be decided') {
+				finalTime = firstSuggestion.replace(/\d{4}-\d{2}-\d{2}/, '').trim() || firstSuggestion;
+			}
+		}
+
+		// Create final plan
+		const eventType = state.eventType || 'event';
+		
+		if (needsVenue) {
+			// Food event - include venue
+			const venues = state.venueOptions || [];
+			const selectedVenue = venues.length > 0 ? venues[0] : null;
+
+			if (!selectedVenue) {
+				throw new Error('No venue selected for food event');
+			}
+
+			const finalPlan: FinalPlan = {
+				eventType: eventType,
+				date: finalDate,
+				time: finalTime,
+				venue: selectedVenue.name,
+				location: selectedVenue.location,
+				attendees: [],
+				confirmedAt: new Date().toISOString(),
+			};
+			
+			state.finalPlan = finalPlan;
+
+			// Broadcast final message BEFORE transitioning to COMPLETE
+			const finalMessage = `✅ ${eventType.toUpperCase()} Confirmed!\n\n⏰ ${finalPlan.date} at ${finalPlan.time}\n🏪 ${finalPlan.venue}\n📍 ${finalPlan.location}\n\nLooking forward to it!`;
+			
+			// Save and broadcast now while still in CONFIRM state
+			await this.broadcastAgentMessage(state.conversationId, finalMessage);
+
+			// Mark workflow as complete AFTER broadcasting
+			state.currentStep = AgentWorkflowStep.COMPLETE;
+			state.stepHistory.push({
+				step: AgentWorkflowStep.CONFIRM,
+				timestamp: new Date().toISOString(),
+				result: 'success',
+				data: finalPlan,
+				message: 'Event plan finalized with venue',
+			});
+
+			return {
+				success: true,
+				currentStep: AgentWorkflowStep.COMPLETE,
+				message: finalMessage,
+				data: finalPlan,
+				completed: true,
+			};
+		} else {
+			// Simple meeting - no venue needed
+			const finalPlan: FinalPlan = {
+				eventType: eventType,
+				date: finalDate,
+				time: finalTime,
+				venue: 'N/A',
+				location: 'Virtual/TBD',
+				attendees: [],
+				confirmedAt: new Date().toISOString(),
+			};
+			
+			state.finalPlan = finalPlan;
+
+			// Build summary message
+			let summary = `✅ ${eventType.toUpperCase()} Scheduled!\n\n`;
+			
+			if (finalDate !== 'To be decided' && finalTime !== 'To be decided') {
+				summary += `⏰ ${finalDate} at ${finalTime}\n\n`;
+			} else if (availability.suggestedTimes.length > 0) {
+				summary += `⏰ Suggested times:\n${availability.suggestedTimes.slice(0, 3).map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\n`;
+			} else {
+				summary += `⏰ Time: ${finalDate} at ${finalTime}\n\n`;
+			}
+			
+			summary += `Team can coordinate the final time in this chat.`;
+
+			// Broadcast final message BEFORE transitioning to COMPLETE
+			await this.broadcastAgentMessage(state.conversationId, summary);
+
+			// Mark workflow as complete AFTER broadcasting
+			state.currentStep = AgentWorkflowStep.COMPLETE;
+			state.stepHistory.push({
+				step: AgentWorkflowStep.CONFIRM,
+				timestamp: new Date().toISOString(),
+				result: 'success',
+				data: finalPlan,
+				message: 'Meeting scheduled',
+			});
+
+			return {
+				success: true,
+				currentStep: AgentWorkflowStep.COMPLETE,
+				message: summary,
+				data: finalPlan,
+				completed: true,
+			};
+		}
+	}
+
+	/**
+	 * Helper: Broadcast agent message to conversation
+	 */
+	private async broadcastAgentMessage(conversationId: string, messageContent: string): Promise<void> {
+		const agentMessageId = `msg_agent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		const now = new Date().toISOString();
+
+		// Save agent message to DO
+		await this.ctx.storage.sql.exec(
+			`INSERT INTO messages (id, conversation_id, sender_id, content, type, status, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			agentMessageId,
+			conversationId,
+			'agent-planner',
+			messageContent,
+			'text',
+			'sent',
+			now,
+			now
+		);
+
+		// Update D1 conversation last message
+		try {
+			await updateConversationLastMessage(
+				this.env.DB,
+				conversationId,
+				now,
+				messageContent.substring(0, 200),
+				'agent-planner'
+			);
+		} catch (error) {
+			console.error('Failed to update D1 last message:', error);
+		}
+
+		// Broadcast to all participants
+		const agentMessage: ServerMessage = {
+			type: 'new_message',
+			message: {
+				id: agentMessageId,
+				conversationId: conversationId,
+				senderId: 'agent-planner',
+				content: messageContent,
+				type: 'text',
+				status: 'sent',
+				createdAt: now,
+				updatedAt: now,
+			}
+		};
+		this.broadcast(agentMessage);
+
+		console.log(`[Agent] Broadcast message: ${messageContent.substring(0, 50)}...`);
+	}
+
+	/**
+	 * Broadcast agent progress as a message to the conversation
+	 */
+	private async broadcastAgentProgress(state: AgentState, response: AgentResponse): Promise<void> {
+		// Don't broadcast error messages or completion states (already handled in step)
+		if (!response.success || state.currentStep === AgentWorkflowStep.COMPLETE || state.currentStep === AgentWorkflowStep.FAILED) {
+			return;
+		}
+		
+		// Broadcast progress message
+		await this.broadcastAgentMessage(state.conversationId, response.message);
+	}
+
+	/**
 	 * RPC Method: Ask AI with RAG
 	 * 
 	 * This method implements Retrieval-Augmented Generation:
@@ -1347,7 +2312,6 @@ ${conversationText}`;
 			// Send push notification to offline message sender
 			await this.sendPushNotificationsForReadReceipt(data.messageId, data.userId, session.conversationId);
 
-			console.log(`Read receipt for message ${data.messageId} by user ${data.userId}`);
 		} catch (error) {
 			console.error('Error handling mark_read:', error);
 		}
@@ -1402,7 +2366,6 @@ ${conversationText}`;
 			);
 
 			if (undeliveredToMe.length > 0) {
-				console.log(`📬 Marking ${undeliveredToMe.length} messages as delivered to ${session.userId}`);
 				
 				// Send delivered status to all senders
 				for (const msg of undeliveredToMe) {
@@ -1628,11 +2591,8 @@ ${conversationText}`;
 			);
 			
 			if (offlineParticipants.length === 0) {
-				console.log('📱 No offline participants to notify');
 				return;
 			}
-			
-			console.log(`📱 Sending push notifications to ${offlineParticipants.length} offline participant(s)`);
 			
 			// Get push tokens for all offline participants
 			const allTokens: string[] = [];
@@ -1640,19 +2600,17 @@ ${conversationText}`;
 				const tokens = await getPushTokensByUserId(this.env.DB, userId);
 				allTokens.push(...tokens.map(t => t.token));
 			}
-			
-			if (allTokens.length === 0) {
-				console.log('📱 No push tokens found for offline participants');
-				return;
-			}
-			
-			// Get sender info for notification
-			const senderInfo = await this.getUserInfo(senderId);
-			const senderName = senderInfo?.name || 'Someone';
-			
-			// Send push notifications
-			await sendMessageNotification(allTokens, message, senderName);
-			console.log(`✅ Sent push notifications to ${allTokens.length} device(s)`);
+		
+		if (allTokens.length === 0) {
+			return;
+		}
+		
+		// Get sender info for notification
+		const senderInfo = await this.getUserInfo(senderId);
+		const senderName = senderInfo?.name || 'Someone';
+		
+		// Send push notifications
+		await sendMessageNotification(allTokens, message, senderName);
 		} catch (error) {
 			console.error('❌ Failed to send push notifications for message:', error);
 			// Don't throw - push notification failures shouldn't break message sending
@@ -1670,42 +2628,36 @@ ${conversationText}`;
 		try {
 			// Get the message to find the sender
 			const messages = await this.getMessages(conversationId, 100);
-			const message = messages.find(m => m.id === messageId);
-			
-			if (!message) {
-				console.log('Message not found for read receipt notification');
-				return;
-			}
-			
-			// Check if sender is online
-			const connectedUserIds = new Set(this.getConnectedUserIds());
-			if (connectedUserIds.has(message.senderId)) {
-				console.log('📱 Sender is online, skipping read receipt push notification');
-				return;
-			}
-			
-			console.log(`📱 Sending read receipt push notification to offline sender ${message.senderId}`);
-			
-			// Get push tokens for the sender
-			const tokens = await getPushTokensByUserId(this.env.DB, message.senderId);
-			
-			if (tokens.length === 0) {
-				console.log('📱 No push tokens found for message sender');
-				return;
-			}
+		const message = messages.find(m => m.id === messageId);
+		
+		if (!message) {
+			return;
+		}
+		
+		// Check if sender is online
+		const connectedUserIds = new Set(this.getConnectedUserIds());
+		if (connectedUserIds.has(message.senderId)) {
+			return;
+		}
+		
+		// Get push tokens for the sender
+		const tokens = await getPushTokensByUserId(this.env.DB, message.senderId);
+		
+		if (tokens.length === 0) {
+			return;
+		}
 			
 			// Get reader info
 			const readerInfo = await this.getUserInfo(readerId);
 			const readerName = readerInfo?.name || 'Someone';
 			
-			// Send push notifications
-			await sendReadReceiptNotification(
-				tokens.map(t => t.token),
-				messageId,
-				conversationId,
-				readerName
-			);
-			console.log(`✅ Sent read receipt notification to ${tokens.length} device(s)`);
+		// Send push notifications
+		await sendReadReceiptNotification(
+			tokens.map(t => t.token),
+			messageId,
+			conversationId,
+			readerName
+		);
 		} catch (error) {
 			console.error('❌ Failed to send push notifications for read receipt:', error);
 			// Don't throw - push notification failures shouldn't break read receipt flow
