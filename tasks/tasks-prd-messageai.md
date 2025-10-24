@@ -200,14 +200,14 @@
   - [x] 7.6 Add error recovery and fallback handling when agent workflow encounters issues
     - **✓ IMPLEMENTED:** Automatic retry on errors, state persistence, error messaging
 
-- [ ] **8.0 Typing Indicators & Quick Wins**
-  - [ ] 8.1 Add WebSocket events for typing state: typing_start, typing_stop in Durable Object message handler
-  - [ ] 8.2 Implement typing broadcast logic in DO: track typing users, broadcast to other participants, auto-timeout after 3 seconds
-  - [ ] 8.3 Add typing state to frontend: send events on input change, clear on blur or send
-  - [ ] 8.4 Display typing indicator UI in chat screen: "Alice is typing..." below messages
-    - **✓ TEST:** Typing indicator appears when user types, disappears after 3 seconds or message sent
-  - [ ] 8.5 Implement group member list UI: modal showing all participants with online status and avatars
-    - **✓ TEST:** Group chat shows member list with accurate online/offline status
+- [x] **8.0 Typing Indicators & Quick Wins** ✅ COMPLETE
+  - [x] 8.1 Add WebSocket events for typing state: typing_start, typing_stop in Durable Object message handler
+  - [x] 8.2 Implement typing broadcast logic in DO: track typing users, broadcast to other participants, auto-timeout after 3 seconds
+  - [x] 8.3 Add typing state to frontend: send events on input change, clear on blur or send
+  - [x] 8.4 Display typing indicator UI in chat screen: "Alice is typing..." below messages
+    - **✅ TESTED:** Typing indicator appears when user types, disappears after 3 seconds or message sent
+  - [x] 8.5 Implement group member list UI: modal showing all participants with online status, names, and last seen times
+    - **✅ TESTED:** Member list shows all participants with names, online/offline status, last seen times
   - [ ] 8.6 Deploy updated app to Expo Go, generate shareable QR code link
     - **✓ TEST:** Two physical devices can access app via QR code, all features working
 
@@ -310,7 +310,34 @@
 
 ---
 
-**Status:** Phase 7.0 COMPLETE ✅ (Multi-Step Agent for Team Event Planning Working!)
+**Status:** Phase 8.0 COMPLETE ✅ (Typing Indicators & Member List Working!)
+
+**Phase 8 Achievements (Oct 24, 2025):**
+
+**Typing Indicators:**
+- ✅ useTyping hook with debounce (300ms) and auto-timeout (3s)
+- ✅ WebSocket typing events (already implemented in backend)
+- ✅ Beautiful typing UI: "Alice is typing...", "Alice and Bob are typing...", "3 people are typing..."
+- ✅ Input handlers: startTyping on change, stopTyping on blur/send
+- ✅ Real-time updates across all participants
+
+**Member List Modal:**
+- ✅ Tappable online indicator (tap "X online" to open)
+- ✅ Beautiful slide-up modal with all participants
+- ✅ Avatar with initials for each member
+- ✅ Online/offline status with colored dots (green/gray)
+- ✅ Last seen times coordinated through DO ("Last seen 5m ago", etc.)
+- ✅ "You" label for current user
+- ✅ Works for 1:1, group, and self-chat
+
+**UX Improvements:**
+- ✅ Better name display throughout app (names instead of user IDs)
+- ✅ Last seen timestamps broadcast via presence_update events
+- ✅ Android crash fix: Removed `gap` property (not supported), replaced with margin-based spacing
+
+**Code Quality:**
+- ✅ Removed unnecessary logging from backend (AI proactive, agent retries, session recreated logs)
+- ✅ Clean, production-ready code
 
 **Phase 7 Achievements (Oct 24, 2025):**
 

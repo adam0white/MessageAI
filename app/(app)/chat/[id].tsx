@@ -14,11 +14,13 @@ import {
 	Alert
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
+import { useSQLiteContext } from 'expo-sqlite';
 import { MessageBubble } from '../../../components/MessageBubble';
 import { useMessages } from '../../../hooks/useMessages';
 import { useConversation } from '../../../hooks/useConversations';
 import { usePresence } from '../../../hooks/usePresence';
 import { useReadReceipts } from '../../../hooks/useReadReceipts';
+import { useTyping } from '../../../hooks/useTyping';
 import { wsClient } from '../../../lib/api/websocket';
 import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
@@ -79,6 +81,7 @@ export default function ChatScreen() {
 	
 	const { userId } = useAuthStore();
 	const { wsStatus } = useNetworkStore();
+	const db = useSQLiteContext();
 	
 	const [inputText, setInputText] = useState('');
 	const [showAiInput, setShowAiInput] = useState(false);
@@ -101,6 +104,10 @@ export default function ChatScreen() {
 	const [agentProgress, setAgentProgress] = useState<AgentProgress | null>(null);
 	const [isRunningAgent, setIsRunningAgent] = useState(false);
 	
+	// Member list modal state
+	const [showMemberList, setShowMemberList] = useState(false);
+	const [lastSeenData, setLastSeenData] = useState<Record<string, string>>({});
+	
 	const flatListRef = useRef<FlatList>(null);
 	const previousMessageCountRef = useRef(0);
 	const isInitialLoadRef = useRef(true);
@@ -110,9 +117,47 @@ export default function ChatScreen() {
 	const { conversation } = useConversation(conversationId);
 	const { onlineUserIds, onlineCount } = usePresence(conversationId);
 	const { markAsRead } = useReadReceipts(conversationId);
+	const { typingUserIds, startTyping, stopTyping } = useTyping(conversationId, userId || '');
 	
 	// Determine if this is a group chat (3+ participants)
 	const isGroupChat = conversation ? conversation.participants.length >= 3 : false;
+
+	// Helper to get user names from participant list
+	const getUserName = (userId: string): string => {
+		if (!conversation) return userId.substring(0, 8);
+		const participant = conversation.participants.find(p => p.userId === userId);
+		return participant?.name || userId.substring(0, 8);
+	};
+
+	// Format typing indicator text
+	const getTypingText = (): string => {
+		if (typingUserIds.length === 0) return '';
+		if (typingUserIds.length === 1) {
+			return `${getUserName(typingUserIds[0])} is typing...`;
+		}
+		if (typingUserIds.length === 2) {
+			return `${getUserName(typingUserIds[0])} and ${getUserName(typingUserIds[1])} are typing...`;
+		}
+		return `${typingUserIds.length} people are typing...`;
+	};
+
+	// Format last seen time
+	const formatLastSeen = (lastSeenAt: string | undefined): string => {
+		if (!lastSeenAt) return 'Offline';
+		
+		const lastSeen = new Date(lastSeenAt);
+		const now = new Date();
+		const diffMs = now.getTime() - lastSeen.getTime();
+		const diffMins = Math.floor(diffMs / 60000);
+		const diffHours = Math.floor(diffMs / 3600000);
+		const diffDays = Math.floor(diffMs / 86400000);
+
+		if (diffMins < 1) return 'Just now';
+		if (diffMins < 60) return `Last seen ${diffMins}m ago`;
+		if (diffHours < 24) return `Last seen ${diffHours}h ago`;
+		if (diffDays < 7) return `Last seen ${diffDays}d ago`;
+		return `Last seen ${lastSeen.toLocaleDateString()}`;
+	};
 
 	// Connect to WebSocket when screen mounts
 	useEffect(() => {
@@ -125,6 +170,29 @@ export default function ChatScreen() {
 			wsClient.disconnect();
 		};
 	}, [userId, conversationId]);
+
+	// Fetch last seen data when member list opens
+	useEffect(() => {
+		if (showMemberList && conversation) {
+			const fetchLastSeen = async () => {
+				try {
+					const result = await db.getAllAsync<{ user_id: string; last_seen_at: string }>(
+						'SELECT user_id, last_seen_at FROM user_presence'
+					);
+					
+					const lastSeenMap: Record<string, string> = {};
+					result.forEach(row => {
+						lastSeenMap[row.user_id] = row.last_seen_at;
+					});
+					setLastSeenData(lastSeenMap);
+				} catch (error) {
+					console.error('Failed to fetch last seen data:', error);
+				}
+			};
+
+			fetchLastSeen();
+		}
+	}, [showMemberList, conversation, db]);
 
 	// Mark all messages as read when chat is opened/focused
 	useEffect(() => {
@@ -169,6 +237,9 @@ export default function ChatScreen() {
 
 		sendMessage({ content: trimmedText, type: 'text' });
 		setInputText('');
+		
+		// Stop typing indicator
+		stopTyping();
 		
 		// Dismiss keyboard after sending
 		Keyboard.dismiss();
@@ -548,15 +619,18 @@ export default function ChatScreen() {
 						<View style={styles.headerRight}>
 							<TouchableOpacity 
 								onPress={() => setShowAiInput(!showAiInput)}
-								style={[styles.aiButton, showAiInput && styles.aiButtonActive]}
+								style={[styles.aiButton, showAiInput && styles.aiButtonActive, { marginRight: 6 }]}
 							>
 								<Text style={styles.aiButtonText}>🤖 AI</Text>
 							</TouchableOpacity>
 							{wsStatus === 'connected' && onlineCount > 0 && (
-								<>
+								<TouchableOpacity 
+									style={styles.onlineStatusContainer}
+									onPress={() => setShowMemberList(true)}
+								>
 									<View style={styles.onlineIndicator} />
-									<Text style={styles.onlineCount}>{onlineCount} online</Text>
-								</>
+									<Text style={[styles.onlineCount, { marginLeft: 6 }]}>{onlineCount} online</Text>
+								</TouchableOpacity>
 							)}
 						</View>
 					),
@@ -665,7 +739,7 @@ export default function ChatScreen() {
 						{/* Progress indicator */}
 						{(isEmbedding || isAskingAi || isProcessing) && (
 							<View style={styles.aiProgressContainer}>
-								<ActivityIndicator size="small" color="#007AFF" />
+								<ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
 								<Text style={styles.aiProgressText}>
 									{isEmbedding ? `Preparing RAG (${messages.length} messages)...` : 
 									 isAskingAi ? 'Asking AI...' : 'Processing...'}
@@ -786,11 +860,26 @@ export default function ChatScreen() {
 						/>
 					)}
 
+				{/* Typing Indicator */}
+				{typingUserIds.length > 0 && (
+					<View style={styles.typingIndicatorContainer}>
+						<Text style={styles.typingIndicatorText}>{getTypingText()}</Text>
+					</View>
+				)}
+
 				<View style={styles.inputContainer}>
 					<TextInput
 						style={styles.input}
 						value={inputText}
-						onChangeText={setInputText}
+						onChangeText={(text) => {
+							setInputText(text);
+							if (text.trim()) {
+								startTyping();
+							} else {
+								stopTyping();
+							}
+						}}
+						onBlur={stopTyping}
 						placeholder="Type a message..."
 						placeholderTextColor="#999"
 						multiline
@@ -812,6 +901,75 @@ export default function ChatScreen() {
 							)}
 						</TouchableOpacity>
 					</View>
+
+				{/* Member List Modal */}
+				<Modal
+					visible={showMemberList}
+					animationType="slide"
+					transparent={true}
+					onRequestClose={() => setShowMemberList(false)}
+				>
+					<TouchableOpacity 
+						style={styles.memberModalOverlay}
+						activeOpacity={1}
+						onPress={() => setShowMemberList(false)}
+					>
+						<TouchableOpacity 
+							style={styles.memberModalContent}
+							activeOpacity={1}
+							onPress={(e) => e.stopPropagation()}
+						>
+							<View style={styles.memberModalHeader}>
+								<Text style={styles.memberModalTitle}>
+									{conversation?.type === 'group' 
+										? `Group Members (${conversation?.participants.length})`
+										: 'Chat Info'
+									}
+								</Text>
+								<TouchableOpacity 
+									onPress={() => setShowMemberList(false)}
+									style={styles.closeButton}
+								>
+									<Text style={styles.closeButtonText}>✕</Text>
+								</TouchableOpacity>
+							</View>
+
+							<View style={styles.memberList}>
+								{conversation?.participants.map((participant) => {
+									const isOnline = onlineUserIds.includes(participant.userId);
+									const isCurrentUser = participant.userId === userId;
+									const displayName = participant.name || participant.userId.substring(0, 8);
+									const lastSeenAt = lastSeenData[participant.userId];
+
+									return (
+										<View key={participant.userId} style={styles.memberItem}>
+											<View style={styles.memberAvatar}>
+												<Text style={styles.memberAvatarText}>
+													{displayName.charAt(0).toUpperCase()}
+												</Text>
+											</View>
+											<View style={styles.memberInfo}>
+												<View style={styles.memberNameRow}>
+													<Text style={styles.memberName}>
+														{displayName}
+														{isCurrentUser && ' (You)'}
+													</Text>
+													<View style={[
+														styles.memberStatusDot,
+														isOnline ? styles.statusOnline : styles.statusOffline
+													]} />
+												</View>
+												<Text style={styles.memberStatus}>
+													{isOnline ? 'Online' : formatLastSeen(lastSeenAt)}
+												</Text>
+											</View>
+										</View>
+									);
+								})}
+							</View>
+						</TouchableOpacity>
+					</TouchableOpacity>
+				</Modal>
 
 				{/* Results Modal */}
 				<Modal
@@ -1109,7 +1267,6 @@ const styles = StyleSheet.create({
 		marginRight: 12,
 		flexDirection: 'row',
 		alignItems: 'center',
-		gap: 6,
 	},
 	aiButton: {
 		backgroundColor: '#f0f0f0',
@@ -1161,7 +1318,6 @@ const styles = StyleSheet.create({
 	aiProgressContainer: {
 		flexDirection: 'row',
 		alignItems: 'center',
-		gap: 8,
 		marginBottom: 8,
 		paddingVertical: 4,
 	},
@@ -1173,7 +1329,6 @@ const styles = StyleSheet.create({
 	aiInputRow: {
 		flexDirection: 'row',
 		alignItems: 'center',
-		gap: 8,
 	},
 	aiInput: {
 		flex: 1,
@@ -1184,6 +1339,7 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 12,
 		paddingVertical: 8,
 		fontSize: 14,
+		marginRight: 8,
 	},
 	aiSendButton: {
 		backgroundColor: '#007AFF',
@@ -1208,7 +1364,6 @@ const styles = StyleSheet.create({
 	// Feature Buttons
 	featureButtonsContainer: {
 		flexDirection: 'row',
-		gap: 8,
 		marginBottom: 8,
 		flexWrap: 'wrap',
 	},
@@ -1219,6 +1374,8 @@ const styles = StyleSheet.create({
 		borderRadius: 6,
 		borderWidth: 1,
 		borderColor: '#e0e0e0',
+		marginRight: 8,
+		marginBottom: 4,
 	},
 	featureButtonActive: {
 		backgroundColor: '#007AFF',
@@ -1494,6 +1651,121 @@ const styles = StyleSheet.create({
 		color: '#555',
 		lineHeight: 20,
 		textAlign: 'center',
+	},
+	// Typing Indicator
+	typingIndicatorContainer: {
+		paddingHorizontal: 16,
+		paddingVertical: 8,
+		backgroundColor: '#f8f9fa',
+	},
+	typingIndicatorText: {
+		fontSize: 13,
+		color: '#666',
+		fontStyle: 'italic',
+	},
+	// Online Status Container
+	onlineStatusContainer: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		paddingVertical: 4,
+		paddingHorizontal: 8,
+		borderRadius: 12,
+		backgroundColor: 'rgba(255, 255, 255, 0.1)',
+	},
+	// Member List Modal
+	memberModalOverlay: {
+		flex: 1,
+		backgroundColor: 'rgba(0, 0, 0, 0.5)',
+		justifyContent: 'flex-end',
+	},
+	memberModalContent: {
+		backgroundColor: '#fff',
+		borderTopLeftRadius: 20,
+		borderTopRightRadius: 20,
+		paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+		maxHeight: '80%',
+	},
+	memberModalHeader: {
+		flexDirection: 'row',
+		justifyContent: 'space-between',
+		alignItems: 'center',
+		paddingHorizontal: 20,
+		paddingVertical: 16,
+		borderBottomWidth: 1,
+		borderBottomColor: '#eee',
+	},
+	memberModalTitle: {
+		fontSize: 18,
+		fontWeight: '600',
+		color: '#000',
+	},
+	closeButton: {
+		width: 32,
+		height: 32,
+		borderRadius: 16,
+		backgroundColor: '#f0f0f0',
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
+	closeButtonText: {
+		fontSize: 20,
+		color: '#666',
+		fontWeight: '500',
+	},
+	memberList: {
+		paddingHorizontal: 20,
+		paddingTop: 12,
+	},
+	memberItem: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		paddingVertical: 12,
+		borderBottomWidth: 1,
+		borderBottomColor: '#f0f0f0',
+	},
+	memberAvatar: {
+		width: 48,
+		height: 48,
+		borderRadius: 24,
+		backgroundColor: '#007AFF',
+		justifyContent: 'center',
+		alignItems: 'center',
+		marginRight: 12,
+	},
+	memberAvatarText: {
+		color: '#fff',
+		fontSize: 18,
+		fontWeight: '600',
+	},
+	memberInfo: {
+		flex: 1,
+	},
+	memberNameRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+		marginBottom: 4,
+	},
+	memberName: {
+		fontSize: 16,
+		fontWeight: '500',
+		color: '#000',
+	},
+	memberStatusDot: {
+		width: 10,
+		height: 10,
+		borderRadius: 5,
+		marginLeft: 8,
+	},
+	statusOnline: {
+		backgroundColor: '#44b700',
+	},
+	statusOffline: {
+		backgroundColor: '#999',
+	},
+	memberStatus: {
+		fontSize: 13,
+		color: '#666',
 	},
 });
 

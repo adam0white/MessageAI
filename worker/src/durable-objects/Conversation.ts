@@ -182,8 +182,6 @@ export class Conversation extends DurableObject<Env> {
 				return { success: true, embeddedCount: 0, totalMessages: 0 };
 			}
 
-			console.log(`[AI Proactive] Starting background embedding for ${allMessages.length} messages`);
-
 		// Embed messages in batches (parallel within batch, rate limits disabled)
 		const BATCH_SIZE = 50; // Large batches for maximum speed
 		const BATCH_DELAY_MS = 0; // No delay needed
@@ -235,8 +233,6 @@ export class Conversation extends DurableObject<Env> {
 			if (vectors.length > 0) {
 				await this.env.VECTORIZE.upsert(vectors);
 			}
-
-			console.log(`[AI Proactive] Embedded ${successCount}/${allMessages.length} messages`);
 
 			return {
 				success: true,
@@ -1047,7 +1043,6 @@ ${conversationText}`;
 			const canRetry = state.errors.filter(e => e.step === state.currentStep).length < 2;
 			
 			if (canRetry) {
-				console.log(`[Agent] Retrying step ${state.currentStep}`);
 				state.errors[state.errors.length - 1].recoveryAttempted = true;
 				return await this.executeAgentStep(state);
 			}
@@ -1755,8 +1750,6 @@ Generate realistic venue names (no fake addresses).`;
 			}
 		};
 		this.broadcast(agentMessage);
-
-		console.log(`[Agent] Broadcast message: ${messageContent.substring(0, 50)}...`);
 	}
 
 	/**
@@ -2150,7 +2143,6 @@ Generate realistic venue names (no fake addresses).`;
 					connectedAt: (meta.connectedAt as number) || Date.now(),
 				};
 				this.sessions.set(ws, session);
-				console.log(`Session recreated for user ${session.userId} after hibernation`);
 			} else {
 				console.error('Received message from unknown session and no metadata available');
 				return;
