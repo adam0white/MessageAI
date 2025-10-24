@@ -163,6 +163,176 @@ export default {
 			}
 		}
 
+		// AI Thread Summarization endpoint
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/summarize') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { userId: string; messageLimit?: number };
+				
+				if (!body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'userId is required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				const result = await (stub as any).summarizeThread(body.userId, conversationId, body.messageLimit || 100);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Summarize thread error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
+		// AI Action Items endpoint
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/action-items') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { userId: string };
+				
+				if (!body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'userId is required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				const result = await (stub as any).extractActionItems(body.userId, conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Extract action items error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
+		// AI Priority Detection endpoint
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/priority-messages') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { userId: string };
+				
+				if (!body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'userId is required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				const result = await (stub as any).detectPriorityMessages(body.userId, conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Detect priority messages error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
+		// AI Decision Tracking endpoint
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/decisions') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { userId: string };
+				
+				if (!body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'userId is required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				const result = await (stub as any).trackDecisions(body.userId, conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Track decisions error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
+		// AI Smart Search endpoint
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/smart-search') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { query: string; userId: string };
+				
+				if (!body.query || !body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'query and userId are required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				const result = await (stub as any).smartSearch(body.query, body.userId, conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Smart search error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
 		// WebSocket upgrade endpoint - routes to Conversation Durable Object
 		if (url.pathname.startsWith('/conversation/')) {
 			const conversationId = url.pathname.split('/')[2];

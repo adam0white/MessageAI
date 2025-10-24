@@ -219,6 +219,594 @@ export class Conversation extends DurableObject<Env> {
 		}
 	}
 
+ 	/**
+	 * RPC Method: Summarize Thread
+	 * 
+	 * Analyzes the conversation and generates a concise 3-bullet summary.
+	 * Useful for catching up on long discussions.
+	 * 
+	 * @param userId - The user requesting the summary
+	 * @param conversationId - The conversation to summarize
+	 * @param messageLimit - Number of recent messages to include (default: 100)
+	 * @returns Summary with key points
+	 */
+	async summarizeThread(userId: string, conversationId: string, messageLimit: number = 100): Promise<{
+		success: boolean;
+		summary?: string;
+		bulletPoints?: string[];
+		messageCount?: number;
+		error?: string;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			// Get recent messages
+			const messages = await this.getMessages(conversationId, messageLimit);
+			
+			if (messages.length === 0) {
+				return { success: false, error: 'No messages to summarize' };
+			}
+
+			// Format conversation for AI
+			const conversationText = messages
+				.map(msg => `[${new Date(msg.createdAt).toLocaleString()}] ${msg.senderId}: ${msg.content}`)
+				.join('\n');
+
+			// Create summarization prompt
+			const systemPrompt = `You are an AI assistant helping remote teams stay productive. 
+Your task is to summarize conversations concisely.
+
+Output format (REQUIRED):
+{
+  "keyPoints": ["point 1", "point 2", "point 3"],
+  "summary": "One-sentence overview of the discussion"
+}
+
+Guidelines:
+- Focus on actionable information and key decisions
+- Keep each point under 15 words
+- Prioritize what remote team members need to know
+- Be specific (mention names, dates, decisions)`;
+
+			const userPrompt = `Summarize this conversation into 3 key points:
+
+${conversationText}`;
+
+			// Call Workers AI
+			const aiResponse: any = await (this.env.AI as any).run(
+				AI_MODELS.LLAMA_8B,
+				{
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						{ role: 'user', content: userPrompt }
+					],
+					max_tokens: 512,
+					temperature: 0.3, // Lower temp for consistent output
+				},
+				{
+					gateway: {
+						id: 'aw-cf-ai',
+						metadata: {
+							conversationId,
+							userId,
+							operation: 'summarize-thread',
+							messageCount: messages.length,
+						}
+					}
+				}
+			);
+
+			const responseText = aiResponse.response as string;
+			
+			if (!responseText) {
+				return { success: false, error: 'AI did not generate a summary' };
+			}
+
+			// Try to parse structured output (JSON)
+			let bulletPoints: string[] = [];
+			let summary = responseText;
+			
+			try {
+				// Look for JSON in the response
+				const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+				if (jsonMatch) {
+					const parsed = JSON.parse(jsonMatch[0]);
+					bulletPoints = parsed.keyPoints || [];
+					summary = parsed.summary || responseText;
+				} else {
+					// Fallback: extract bullet points from text
+					const lines = responseText.split('\n').filter(line => line.trim());
+					bulletPoints = lines.slice(0, 3);
+					summary = bulletPoints.join(' • ');
+				}
+			} catch (parseError) {
+				// If parsing fails, use the raw response
+				const lines = responseText.split('\n').filter(line => line.trim());
+				bulletPoints = lines.slice(0, 3);
+			}
+
+			return {
+				success: true,
+				summary,
+				bulletPoints,
+				messageCount: messages.length,
+			};
+
+		} catch (error) {
+			console.error('[AI Summarize] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error'
+			};
+		}
+	}
+
+	/**
+	 * RPC Method: Extract Action Items
+	 * 
+	 * Identifies tasks, assignees, and due dates from the conversation.
+	 * Uses structured output to return actionable items.
+	 * 
+	 * @param userId - The user requesting action items
+	 * @param conversationId - The conversation to analyze
+	 * @returns List of action items with metadata
+	 */
+	async extractActionItems(userId: string, conversationId: string): Promise<{
+		success: boolean;
+		actionItems?: Array<{
+			task: string;
+			assignee?: string;
+			dueDate?: string;
+			mentioned?: string;
+		}>;
+		error?: string;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			const messages = await this.getMessages(conversationId, 100);
+			
+			if (messages.length === 0) {
+				return { success: false, error: 'No messages to analyze' };
+			}
+
+			const conversationText = messages
+				.map(msg => `[${new Date(msg.createdAt).toLocaleString()}] ${msg.senderId}: ${msg.content}`)
+				.join('\n');
+
+			const systemPrompt = `You are an AI assistant that extracts action items from team conversations.
+
+Output format (REQUIRED JSON):
+{
+  "actionItems": [
+    {
+      "task": "Description of the task",
+      "assignee": "person mentioned or null",
+      "dueDate": "date mentioned or null",
+      "mentioned": "relevant context"
+    }
+  ]
+}
+
+Guidelines:
+- Look for phrases like "can you", "please", "we need to", "I'll", "let's"
+- Identify explicit task assignments
+- Extract mentioned dates and deadlines
+- Return empty array if no action items found`;
+
+			const userPrompt = `Extract all action items from this conversation:
+
+${conversationText}`;
+
+			const aiResponse: any = await (this.env.AI as any).run(
+				AI_MODELS.LLAMA_8B,
+				{
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						{ role: 'user', content: userPrompt }
+					],
+					max_tokens: 800,
+					temperature: 0.2,
+				},
+				{
+					gateway: {
+						id: 'aw-cf-ai',
+						metadata: {
+							conversationId,
+							userId,
+							operation: 'extract-action-items',
+						}
+					}
+				}
+			);
+
+			const responseText = aiResponse.response as string;
+			
+			// Parse structured output
+			let actionItems: any[] = [];
+			try {
+				const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+				if (jsonMatch) {
+					const parsed = JSON.parse(jsonMatch[0]);
+					actionItems = parsed.actionItems || [];
+				}
+			} catch (parseError) {
+				console.error('Failed to parse action items JSON:', parseError);
+				// Return empty array instead of error
+				actionItems = [];
+			}
+
+			return {
+				success: true,
+				actionItems,
+			};
+
+		} catch (error) {
+			console.error('[AI Action Items] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error'
+			};
+		}
+	}
+
+	/**
+	 * RPC Method: Detect Priority Messages
+	 * 
+	 * Analyzes messages for urgency indicators and sentiment.
+	 * Returns messages that require immediate attention.
+	 * 
+	 * @param userId - The user requesting priority detection
+	 * @param conversationId - The conversation to analyze
+	 * @returns List of priority messages with scores
+	 */
+	async detectPriorityMessages(userId: string, conversationId: string): Promise<{
+		success: boolean;
+		priorityMessages?: Array<{
+			messageId: string;
+			content: string;
+			sender: string;
+			timestamp: string;
+			priority: 'high' | 'medium';
+			reason: string;
+		}>;
+		error?: string;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			const messages = await this.getMessages(conversationId, 50);
+			
+			if (messages.length === 0) {
+				return { success: false, error: 'No messages to analyze' };
+			}
+
+			// Build message list with IDs for reference
+			const messageList = messages
+				.map((msg, idx) => `[MSG_${idx}] [${new Date(msg.createdAt).toLocaleString()}] ${msg.senderId}: ${msg.content}`)
+				.join('\n');
+
+			const systemPrompt = `You are an AI assistant that identifies priority messages requiring immediate attention.
+
+Output format (REQUIRED JSON):
+{
+  "priorityMessages": [
+    {
+      "messageIndex": 0,
+      "priority": "high",
+      "reason": "Contains urgent deadline"
+    }
+  ]
+}
+
+Priority indicators:
+- HIGH: "urgent", "ASAP", "immediately", "critical", "emergency", deadlines within 24h
+- MEDIUM: "soon", "important", "please review", time-sensitive questions
+
+Return empty array if no priority messages found.`;
+
+			const userPrompt = `Identify priority messages:
+
+${messageList}`;
+
+			const aiResponse: any = await (this.env.AI as any).run(
+				AI_MODELS.LLAMA_8B,
+				{
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						{ role: 'user', content: userPrompt }
+					],
+					max_tokens: 600,
+					temperature: 0.2,
+				},
+				{
+					gateway: {
+						id: 'aw-cf-ai',
+						metadata: {
+							conversationId,
+							userId,
+							operation: 'detect-priority',
+						}
+					}
+				}
+			);
+
+			const responseText = aiResponse.response as string;
+			
+			// Parse and map back to actual messages
+			let priorityMessages: any[] = [];
+			try {
+				const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+				if (jsonMatch) {
+					const parsed = JSON.parse(jsonMatch[0]);
+					const detectedPriority = parsed.priorityMessages || [];
+					
+					priorityMessages = detectedPriority
+						.filter((item: any) => item.messageIndex < messages.length)
+						.map((item: any) => {
+							const msg = messages[item.messageIndex];
+							return {
+								messageId: msg.id,
+								content: msg.content,
+								sender: msg.senderId,
+								timestamp: msg.createdAt,
+								priority: item.priority || 'medium',
+								reason: item.reason || 'Priority detected',
+							};
+						});
+				}
+			} catch (parseError) {
+				console.error('Failed to parse priority messages JSON:', parseError);
+			}
+
+			return {
+				success: true,
+				priorityMessages,
+			};
+
+		} catch (error) {
+			console.error('[AI Priority] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error'
+			};
+		}
+	}
+
+	/**
+	 * RPC Method: Track Decisions
+	 * 
+	 * Identifies consensus phrases and extracts decisions made in the conversation.
+	 * Returns a timeline of agreed-upon points.
+	 * 
+	 * @param userId - The user requesting decision tracking
+	 * @param conversationId - The conversation to analyze
+	 * @returns List of decisions with timestamps
+	 */
+	async trackDecisions(userId: string, conversationId: string): Promise<{
+		success: boolean;
+		decisions?: Array<{
+			decision: string;
+			timestamp: string;
+			participants: string[];
+			context: string;
+		}>;
+		error?: string;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			const messages = await this.getMessages(conversationId, 100);
+			
+			if (messages.length === 0) {
+				return { success: false, error: 'No messages to analyze' };
+			}
+
+			const conversationText = messages
+				.map(msg => `[${new Date(msg.createdAt).toLocaleString()}] ${msg.senderId}: ${msg.content}`)
+				.join('\n');
+
+			const systemPrompt = `You are an AI assistant that tracks decisions made in team conversations.
+
+Output format (REQUIRED JSON):
+{
+  "decisions": [
+    {
+      "decision": "Clear description of what was decided",
+      "timestamp": "timestamp from conversation",
+      "participants": ["person1", "person2"],
+      "context": "Brief context or reason"
+    }
+  ]
+}
+
+Decision indicators:
+- "we decided", "let's go with", "agreed", "confirmed", "final decision"
+- Consensus phrases like "sounds good", "that works", "let's do it"
+- Explicit commitments like "I'll proceed with", "we're moving forward"
+
+Return empty array if no clear decisions found.`;
+
+			const userPrompt = `Extract all decisions made in this conversation:
+
+${conversationText}`;
+
+			const aiResponse: any = await (this.env.AI as any).run(
+				AI_MODELS.LLAMA_8B,
+				{
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						{ role: 'user', content: userPrompt }
+					],
+					max_tokens: 800,
+					temperature: 0.2,
+				},
+				{
+					gateway: {
+						id: 'aw-cf-ai',
+						metadata: {
+							conversationId,
+							userId,
+							operation: 'track-decisions',
+						}
+					}
+				}
+			);
+
+			const responseText = aiResponse.response as string;
+			
+			let decisions: any[] = [];
+			try {
+				const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+				if (jsonMatch) {
+					const parsed = JSON.parse(jsonMatch[0]);
+					decisions = parsed.decisions || [];
+				}
+			} catch (parseError) {
+				console.error('Failed to parse decisions JSON:', parseError);
+			}
+
+			return {
+				success: true,
+				decisions,
+			};
+
+		} catch (error) {
+			console.error('[AI Decisions] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error'
+			};
+		}
+	}
+
+	/**
+	 * RPC Method: Smart Search
+	 * 
+	 * Implements semantic search using RAG embeddings + LLM re-ranking.
+	 * More powerful than keyword search for finding relevant context.
+	 * 
+	 * @param query - The search query
+	 * @param userId - The user performing the search
+	 * @param conversationId - The conversation to search
+	 * @returns Ranked search results
+	 */
+	async smartSearch(query: string, userId: string, conversationId: string): Promise<{
+		success: boolean;
+		results?: Array<{
+			messageId: string;
+			content: string;
+			sender: string;
+			timestamp: string;
+			relevanceScore: number;
+			snippet: string;
+		}>;
+		error?: string;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			const allMessages = await this.getMessages(conversationId, 200);
+			
+			if (allMessages.length === 0) {
+				return { success: false, error: 'No messages to search' };
+			}
+
+			// Ensure messages are embedded (reuse existing logic)
+			let embeddingsExist = false;
+			if (allMessages.length > 0) {
+				try {
+					const firstMessageId = allMessages[0].id;
+					const existingVectors = await this.env.VECTORIZE.getByIds([firstMessageId]);
+					embeddingsExist = existingVectors.length > 0;
+				} catch (error) {
+					console.log('[Smart Search] Will create embeddings');
+				}
+			}
+
+			// Embed if needed (same logic as askAI)
+			if (!embeddingsExist) {
+				const BATCH_SIZE = 50;
+				const vectors = [];
+
+				for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+					const batch = allMessages.slice(i, i + BATCH_SIZE);
+					
+					const batchResults = await Promise.allSettled(
+						batch.map(async (msg) => {
+							const embedding = await generateEmbedding(
+								this.env,
+								msg.content,
+								{ conversationId: msg.conversationId, messageId: msg.id }
+							);
+
+							return {
+								id: msg.id,
+								values: embedding,
+								metadata: {
+									conversationId: msg.conversationId,
+									senderId: msg.senderId,
+									content: msg.content,
+									timestamp: msg.createdAt,
+								}
+							};
+						})
+					);
+
+					for (const result of batchResults) {
+						if (result.status === 'fulfilled') {
+							vectors.push(result.value);
+						}
+					}
+				}
+
+				if (vectors.length > 0) {
+					await this.env.VECTORIZE.upsert(vectors);
+				}
+			}
+
+			// Generate query embedding
+			const queryEmbedding = await generateEmbedding(
+				this.env,
+				query,
+				{ conversationId, userId, operation: 'search' }
+			);
+
+			// Semantic search
+			const searchResults = await this.env.VECTORIZE.query(queryEmbedding, {
+				topK: 10,
+				returnMetadata: 'all',
+			});
+
+			// Filter by conversation
+			const filteredMatches = searchResults.matches.filter(
+				match => match.metadata && (match.metadata as any).conversationId === conversationId
+			);
+
+			// Map to response format
+			const results = filteredMatches.map(match => ({
+				messageId: match.id,
+				content: (match.metadata as any).content as string,
+				sender: (match.metadata as any).senderId as string,
+				timestamp: (match.metadata as any).timestamp as string,
+				relevanceScore: match.score || 0,
+				snippet: ((match.metadata as any).content as string).substring(0, 100) + '...',
+			}));
+
+			return {
+				success: true,
+				results,
+			};
+
+		} catch (error) {
+			console.error('[Smart Search] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error'
+			};
+		}
+	}
+
 	/**
 	 * RPC Method: Ask AI with RAG
 	 * 

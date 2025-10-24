@@ -238,4 +238,58 @@ Simple JSON messages over WebSocket:
 - **Function calling**: LLM calls tools (extract action items, search conversations)
 - **Workflows**: Long-running tasks don't block Workers
 
-*Phase 6+ will add: Thread Summarization, Action Items, Priority Detection, Decision Tracking, Smart Search*
+### Phase 6 AI Features (Implemented ✅)
+
+**1. Thread Summarization Pattern:**
+- Fetches recent N messages (default: 100)
+- Formats conversation with timestamps and senders
+- Uses structured output (JSON) for consistent 3-bullet points
+- Low temperature (0.3) for factual summaries
+- Fallback parsing if JSON not returned
+- Returns: { bulletPoints: string[], summary: string, messageCount: number }
+
+**2. Action Item Extraction Pattern:**
+- Analyzes last 100 messages for task indicators
+- Phrases: "can you", "please", "we need to", "I'll", "let's"
+- Structured JSON output with task, assignee, dueDate, context
+- Temperature: 0.2 for precise extraction
+- Returns empty array if no items found (not an error)
+
+**3. Priority Message Detection Pattern:**
+- Scans last 50 messages for urgency indicators
+- HIGH: "urgent", "ASAP", "immediately", "critical", "emergency", <24h deadlines
+- MEDIUM: "soon", "important", "please review", time-sensitive questions
+- Maps message indices back to actual message objects
+- Returns: { messageId, content, sender, timestamp, priority, reason }
+- UI: Clickable messages that scroll to original
+
+**4. Decision Tracking Pattern:**
+- Analyzes last 100 messages for consensus phrases
+- Indicators: "we decided", "let's go with", "agreed", "confirmed", "final decision"
+- Also detects: "sounds good", "that works", "let's do it", "I'll proceed with"
+- Extracts: decision text, timestamp, participants, context
+- Timeline view of all agreed-upon points
+
+**5. Smart Search Pattern:**
+- Reuses existing Vectorize embeddings (from Phase 5 RAG)
+- Generates query embedding using bge-base-en-v1.5
+- Semantic search with top-10 results
+- Filters by conversation ID in code (Vectorize filter workaround)
+- Returns: { messageId, content, sender, timestamp, relevanceScore, snippet }
+- UI shows relevance as percentage (score * 100)
+- Clickable results to jump to message
+
+### AI Feature UI Pattern (Unified Panel)
+- **6 Feature Buttons**: Ask, Summary, Actions, Priority, Decisions, Search
+- **Active State**: Blue background on selected feature
+- **One-Click Actions**: Summary/Actions/Priority/Decisions auto-run on click
+- **Input Fields**: Only shown for Ask and Search features
+- **Progress Indicators**: Show during AI processing
+- **Results Modal**: Feature-specific layouts with:
+  - Summary: Bullet points with count
+  - Actions: Task cards with green accent
+  - Priority: Color-coded badges (red/yellow)
+  - Decisions: Blue accent with timeline
+  - Search: Percentage match scores
+- **Clickable References**: Tap to scroll to original message
+- **Empty States**: Friendly messages when no results found
