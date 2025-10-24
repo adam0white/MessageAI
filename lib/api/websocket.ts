@@ -128,11 +128,9 @@ class WebSocketClient {
 		}
 	};
 
-	this.ws.onerror = (error) => {
-		if (this.shouldReconnect && this.reconnectAttempts === 0) {
-			console.error('WebSocket: Connection error');
-		}
-	};
+		this.ws.onerror = () => {
+			// Error handling done in onclose
+		};
 
 	this.ws.onclose = (event) => {
 		useNetworkStore.getState().setWsStatus('disconnected');

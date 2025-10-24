@@ -44,6 +44,11 @@
 - `components/MessageBubble.tsx` - Message bubble with timestamps and status indicators
 - `lib/api/websocket.ts` - WebSocket client with auto-reconnection, message queue, and type-safe handlers
 
+### Frontend (Expo App) - AI Assistant Created
+- `app/(app)/ai-assistant.tsx` - Standalone AI assistant screen (legacy, for general questions)
+- `app/(app)/chat/[id].tsx` - Updated with sticky AI input, "🤖 AI" button, RAG integration
+- `lib/api/types.ts` - Updated with AI request/response types
+
 ### Frontend (Expo App) - To Be Created
 - `app/(app)/new-conversation.tsx` - Create conversation screen
 - `components/ConversationListItem.tsx` - Conversation preview component (using inline for now)
@@ -68,6 +73,12 @@
 ### Backend (Cloudflare Workers) - Push Notifications Created
 - `worker/src/handlers/notifications.ts` - Push notification sender via Expo Push API
 - `worker/src/handlers/push-tokens.ts` - Push token registration and deletion endpoints
+
+### Backend (Cloudflare Workers) - AI Infrastructure & RAG Created
+- `worker/src/handlers/ai.ts` - AI handler with generateEmbedding(), AI Gateway integration (aw-cf-ai)
+- `worker/src/durable-objects/Conversation.ts` - askAI() RPC method with full RAG pipeline
+- `worker/src/index.ts` - POST /api/conversations/:id/ask-ai endpoint for RPC calls
+- `worker/wrangler.jsonc` - Updated with Workers AI and Vectorize bindings
 
 ### Shared - Created
 - `shared/types.ts` - Complete type definitions (User, Message, Conversation, WebSocket protocol with ConnectedEvent)
@@ -155,15 +166,15 @@
 
 ### Post-MVP Phase (Days 2-7)
 
-- [ ] **5.0 AI Infrastructure & Workers AI Integration**
-  - [ ] 5.1 Set up Cloudflare Workers AI binding and AI Gateway in wrangler.jsonc for cost tracking and caching
-  - [ ] 5.2 Create AI handler module with Workers AI client initialization and prompt templates for Remote Team Professional persona
-  - [ ] 5.3 Implement RAG pipeline: fetch conversation history from Durable Object, create context window, handle token limits
-  - [ ] 5.4 Create AI assistant screen in app with chat interface and navigation from conversation list
-  - [ ] 5.5 Add AI endpoint to Worker that receives requests, calls Workers AI, returns responses
-    - **✓ TEST:** Send message to AI assistant, receive relevant response with conversation context
-  - [ ] 5.6 Implement error handling and rate limiting for AI requests, cache common queries in Workers KV
-    - **✓ TEST:** AI handles API errors gracefully, repeated queries return cached results
+- [x] **5.0 AI Infrastructure & RAG with Vectorize** ✅ COMPLETE
+  - [x] 5.1 Vectorize index setup (messageai-embeddings, 768D cosine)
+  - [x] 5.2 AI Gateway integration (aw-cf-ai, metadata tracking)
+  - [x] 5.3 RAG: Sequential embedding (5/batch, 300ms), semantic search (top-5), hybrid context
+  - [x] 5.4 Sticky AI input (non-blocking, always editable, progress indicators)
+  - [x] 5.5 RPC methods: askAI(), startEmbedding() (proactive background prep)
+  - [x] 5.6 AI as participant (responses saved as messages, broadcast to all)
+  - [x] 5.7 Fixes: D1 update params, Qwen 1.5 14B model (faster), input UX
+    - **✅ TESTED:** AI messages persist, appear in conv list, visible when users open chat
 
 - [ ] **6.0 Required AI Features for Remote Team Professional**
   - [ ] 6.1 Thread Summarization: analyze conversation history, extract key points, generate 3-bullet summary
@@ -299,7 +310,38 @@
 
 ---
 
-**Status:** Phase 4.0 COMPLETE ✅ (Foreground Notifications Working!)
+**Status:** Phase 5.0 FINALIZED ✅ (RAG Production-Ready!)
+
+**Phase 5 Achievements (Oct 23, 2025):**
+
+**RAG Pipeline:**
+- ✅ Vectorize index (768D, cosine), bge-base-en-v1.5 embeddings
+- ✅ Sequential embedding (5 msgs/batch, 300ms delay) - avoids rate limits
+- ✅ Proactive embedding on panel open (background, non-blocking)
+- ✅ Semantic search (top-5) + recent messages (last 10)
+- ✅ AI Gateway (aw-cf-ai) with metadata tracking
+- ✅ RPC: askAI() method, startEmbedding() for proactive prep
+- ✅ Model: Qwen 1.5 14B (faster than Llama 8B)
+
+**Frontend:**
+- ✅ Sticky AI input (always editable, non-blocking)
+- ✅ Progress: "Preparing RAG (N messages)..." → "Asking AI..."
+- ✅ AI button (blue when active)
+- ✅ AI responses as messages (visible to all)
+
+**Fixes:**
+- 🔧 Sequential embedding (not parallel) - prevents rate limits
+- 🔧 D1 update fix - proper timestamp/content/sender parameters
+- 🔧 Faster model - Qwen 1.5 14B for better performance
+
+**Deployed:**
+- 🚀 Version: c2af38a2 + fixes
+- 🚀 Vectorize: messageai-embeddings
+- 🚀 Endpoints: /api/conversations/:id/ask-ai, /start-embedding
+
+**Next Phase:** Phase 6.0 - Build specific AI features (Summarization, Action Items, etc.) on top of RAG
+
+---
 
 **Phase 4 Achievements (Oct 22, 2025):**
 

@@ -154,9 +154,14 @@ export default function ConversationListScreen() {
 						<Text style={styles.welcomeText}>
 							Welcome, {user?.firstName || user?.emailAddresses[0]?.emailAddress.split('@')[0]}
 						</Text>
-						<TouchableOpacity onPress={() => router.push('/profile')} style={styles.profileButton}>
-							<Text style={styles.profileButtonText}>Profile</Text>
-						</TouchableOpacity>
+						<View style={styles.headerButtons}>
+							<TouchableOpacity onPress={() => router.push('/ai-assistant')} style={styles.aiButton}>
+								<Text style={styles.aiButtonText}>🤖 AI</Text>
+							</TouchableOpacity>
+							<TouchableOpacity onPress={() => router.push('/profile')} style={styles.profileButton}>
+								<Text style={styles.profileButtonText}>Profile</Text>
+							</TouchableOpacity>
+						</View>
 					</View>
 					<TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
 						<Text style={styles.signOutText}>Sign Out</Text>
@@ -339,6 +344,20 @@ const styles = StyleSheet.create({
 		fontWeight: '500',
 		color: '#000',
 		flex: 1,
+	},
+	headerButtons: {
+		flexDirection: 'row',
+		gap: 8,
+	},
+	aiButton: {
+		paddingHorizontal: 12,
+		paddingVertical: 6,
+		backgroundColor: '#f0f0f0',
+		borderRadius: 6,
+	},
+	aiButtonText: {
+		fontSize: 14,
+		fontWeight: '600',
 	},
 	profileButton: {
 		paddingHorizontal: 12,

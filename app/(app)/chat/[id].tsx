@@ -9,7 +9,9 @@ import {
 	KeyboardAvoidingView, 
 	Platform,
 	ActivityIndicator,
-	Keyboard
+	Keyboard,
+	Modal,
+	Alert
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { MessageBubble } from '../../../components/MessageBubble';
@@ -21,6 +23,8 @@ import { wsClient } from '../../../lib/api/websocket';
 import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
 
+const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'https://messageai-worker.abdulisik.workers.dev';
+
 export default function ChatScreen() {
 	const { id } = useLocalSearchParams<{ id: string }>();
 	const conversationId = id!;
@@ -29,9 +33,14 @@ export default function ChatScreen() {
 	const { wsStatus } = useNetworkStore();
 	
 	const [inputText, setInputText] = useState('');
+	const [showAiInput, setShowAiInput] = useState(false);
+	const [aiQuery, setAiQuery] = useState('');
+	const [isAskingAi, setIsAskingAi] = useState(false);
+	const [isEmbedding, setIsEmbedding] = useState(false);
 	const flatListRef = useRef<FlatList>(null);
 	const previousMessageCountRef = useRef(0);
 	const isInitialLoadRef = useRef(true);
+	const hasStartedEmbedding = useRef(false);
 	
 	const { messages, isLoading, sendMessage, isSending, refetch } = useMessages(conversationId);
 	const { conversation } = useConversation(conversationId);
@@ -101,6 +110,62 @@ export default function ChatScreen() {
 		Keyboard.dismiss();
 	};
 
+	// Start proactive embedding when AI panel opens
+	useEffect(() => {
+		if (showAiInput && !hasStartedEmbedding.current && messages.length > 0) {
+			hasStartedEmbedding.current = true;
+			setIsEmbedding(true);
+
+			// Start embedding in background
+			fetch(`${WORKER_URL}/api/conversations/${conversationId}/start-embedding`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+			})
+				.then(res => res.json())
+			.catch(() => {
+				// Embedding will happen on-demand during query
+			})
+				.finally(() => {
+					setIsEmbedding(false);
+				});
+		}
+	}, [showAiInput, conversationId, messages.length]);
+
+	const handleAskAI = async () => {
+		if (!aiQuery.trim() || isAskingAi || isEmbedding) return;
+
+		setIsAskingAi(true);
+		const query = aiQuery.trim();
+		setAiQuery('');
+
+		try {
+			const response = await fetch(`${WORKER_URL}/api/conversations/${conversationId}/ask-ai`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					query,
+					userId,
+				}),
+			});
+
+			const result = await response.json();
+
+			if (!result.success) {
+				Alert.alert('AI Error', result.error || 'Failed to get AI response');
+			} else {
+				// AI response will appear as a message automatically (broadcast by DO)
+				setShowAiInput(false);
+			}
+		} catch (error) {
+			console.error('AI request failed:', error);
+			Alert.alert('Error', 'Failed to ask AI. Please try again.');
+		} finally {
+			setIsAskingAi(false);
+		}
+	};
+
 	const renderConnectionStatus = () => {
 		if (wsStatus === 'connected') return null;
 
@@ -145,6 +210,12 @@ export default function ChatScreen() {
 					title: getHeaderTitle(),
 					headerRight: () => (
 						<View style={styles.headerRight}>
+							<TouchableOpacity 
+								onPress={() => setShowAiInput(!showAiInput)}
+								style={[styles.aiButton, showAiInput && styles.aiButtonActive]}
+							>
+								<Text style={styles.aiButtonText}>🤖 AI</Text>
+							</TouchableOpacity>
 							{wsStatus === 'connected' && onlineCount > 0 && (
 								<>
 									<View style={styles.onlineIndicator} />
@@ -161,6 +232,55 @@ export default function ChatScreen() {
 				behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
 				keyboardVerticalOffset={90}
 			>
+				{/* AI Input - Sticky at top */}
+				{showAiInput && (
+					<View style={styles.aiInputContainer}>
+						<View style={styles.aiInputHeader}>
+							<Text style={styles.aiInputTitle}>🤖 Ask AI about this conversation</Text>
+							<TouchableOpacity onPress={() => setShowAiInput(false)}>
+								<Text style={styles.aiInputClose}>✕</Text>
+							</TouchableOpacity>
+						</View>
+						
+						{/* Progress indicator - always show if there's progress */}
+						{(isEmbedding || isAskingAi) && (
+							<View style={styles.aiProgressContainer}>
+								<ActivityIndicator size="small" color="#007AFF" />
+								<Text style={styles.aiProgressText}>
+									{isEmbedding ? `Preparing RAG (${messages.length} messages)...` : 'Asking AI...'}
+								</Text>
+							</View>
+						)}
+
+						<View style={styles.aiInputRow}>
+							<TextInput
+								style={styles.aiInput}
+								value={aiQuery}
+								onChangeText={setAiQuery}
+								placeholder="What have we been discussing?"
+								placeholderTextColor="#999"
+								editable={true}
+								autoFocus
+							/>
+							<TouchableOpacity
+								style={[styles.aiSendButton, (!aiQuery.trim() || isAskingAi || isEmbedding) && styles.aiSendButtonDisabled]}
+								onPress={handleAskAI}
+								disabled={!aiQuery.trim() || isAskingAi || isEmbedding}
+							>
+								{(isAskingAi || isEmbedding) ? (
+									<ActivityIndicator size="small" color="#fff" />
+								) : (
+									<Text style={styles.aiSendButtonText}>Ask</Text>
+								)}
+							</TouchableOpacity>
+						</View>
+						
+						<Text style={styles.aiInputHint}>
+							{isEmbedding ? '⏳ Preparing semantic search...' : 'Response will appear as a message below (uses RAG)'}
+						</Text>
+					</View>
+				)}
+
 				{renderConnectionStatus()}
 					{isLoading ? (
 						<View style={styles.loadingContainer}>
@@ -312,6 +432,20 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 		gap: 6,
 	},
+	aiButton: {
+		backgroundColor: '#f0f0f0',
+		paddingHorizontal: 10,
+		paddingVertical: 5,
+		borderRadius: 6,
+		marginRight: 8,
+	},
+	aiButtonActive: {
+		backgroundColor: '#007AFF',
+	},
+	aiButtonText: {
+		fontSize: 13,
+		fontWeight: '600',
+	},
 	onlineIndicator: {
 		width: 12,
 		height: 12,
@@ -322,6 +456,75 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		color: '#65676b',
 		fontWeight: '500',
+	},
+	// AI Input Styles (sticky at top)
+	aiInputContainer: {
+		backgroundColor: '#f8f9fa',
+		borderBottomWidth: 1,
+		borderBottomColor: '#e0e0e0',
+		padding: 12,
+	},
+	aiInputHeader: {
+		flexDirection: 'row',
+		justifyContent: 'space-between',
+		alignItems: 'center',
+		marginBottom: 8,
+	},
+	aiInputTitle: {
+		fontSize: 14,
+		fontWeight: '600',
+		color: '#333',
+	},
+	aiInputClose: {
+		fontSize: 20,
+		color: '#666',
+	},
+	aiProgressContainer: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 8,
+		marginBottom: 8,
+		paddingVertical: 4,
+	},
+	aiProgressText: {
+		fontSize: 12,
+		color: '#007AFF',
+		fontStyle: 'italic',
+	},
+	aiInputRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 8,
+	},
+	aiInput: {
+		flex: 1,
+		backgroundColor: '#fff',
+		borderWidth: 1,
+		borderColor: '#e0e0e0',
+		borderRadius: 8,
+		paddingHorizontal: 12,
+		paddingVertical: 8,
+		fontSize: 14,
+	},
+	aiSendButton: {
+		backgroundColor: '#007AFF',
+		paddingHorizontal: 16,
+		paddingVertical: 8,
+		borderRadius: 8,
+	},
+	aiSendButtonDisabled: {
+		backgroundColor: '#ccc',
+	},
+	aiSendButtonText: {
+		color: '#fff',
+		fontSize: 14,
+		fontWeight: '600',
+	},
+	aiInputHint: {
+		fontSize: 11,
+		color: '#999',
+		marginTop: 6,
+		fontStyle: 'italic',
 	},
 });
 

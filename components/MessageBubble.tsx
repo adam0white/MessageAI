@@ -11,7 +11,7 @@ interface MessageBubbleProps {
 	showSenderName?: boolean; // Explicitly show sender name (for groups)
 }
 
-export function MessageBubble({ message, isGroupChat = false, showSenderName = false }: MessageBubbleProps) {
+export const MessageBubble = React.memo(function MessageBubble({ message, isGroupChat = false, showSenderName = false }: MessageBubbleProps) {
 	const db = useSQLiteContext();
 	const { userId } = useAuthStore();
 	const isOwnMessage = message.senderId === userId;
@@ -101,7 +101,7 @@ export function MessageBubble({ message, isGroupChat = false, showSenderName = f
 			</View>
 		</View>
 	);
-}
+});
 
 const styles = StyleSheet.create({
 	container: {

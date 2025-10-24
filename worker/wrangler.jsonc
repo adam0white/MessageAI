@@ -43,5 +43,23 @@
 			"database_name": "messageai-db",
 			"database_id": "ab90aaef-62cd-4087-83c8-b2af1ce627a1"
 		}
+	],
+	/**
+	 * Workers AI Binding
+	 * AI Gateway is configured via call arguments, not binding
+	 * https://developers.cloudflare.com/workers-ai/
+	 */
+	"ai": {
+		"binding": "AI"
+	},
+	/**
+	 * Vectorize Index for RAG
+	 * https://developers.cloudflare.com/vectorize/
+	 */
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "messageai-embeddings"
+		}
 	]
 }

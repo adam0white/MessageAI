@@ -177,20 +177,65 @@ Simple JSON messages over WebSocket:
 - Read receipts implemented but UI not showing them clearly
 - Typing indicators implemented but not tested
 
-## AI Patterns (Post-MVP)
+## AI Patterns (Phase 5.0 - RAG Complete)
 
-### RAG Pipeline Pattern
-- **Vectorize**: Store message embeddings
-- **Semantic search**: Query relevant messages before LLM call
-- **Context window**: Pass retrieved messages to LLM
+### RAG Pipeline Pattern (Implemented ✅)
+- **On-Demand Embedding**: Messages embedded on first AI query
+- **Batched Processing**: 10 messages per batch, 100ms delay (prevents rate limiting)
+- **Vectorize Storage**: bge-base-en-v1.5 embeddings (768 dimensions), cosine similarity
+- **Semantic Search**: Top-5 most relevant messages retrieved
+- **Hybrid Context**: RAG results + recent 10 messages passed to LLM
+- **Caching**: Vectorize upsert is idempotent (subsequent queries use cached embeddings)
 
-### Agent Pattern
+### AI Request Flow (RAG-Enabled)
+1. User clicks "🤖 AI" button in chat header → sticky input appears
+2. User types query → sends to `/api/conversations/:id/ask-ai`
+3. Worker calls DO's `askAI()` RPC method
+4. DO fetches all messages from conversation
+5. **Embedding Phase** (batched):
+   - Process messages in batches of 10
+   - 100ms delay between batches to avoid rate limits
+   - Generate embeddings using bge-base-en-v1.5 via AI Gateway
+   - Upsert to Vectorize (idempotent - cached for future queries)
+6. **Retrieval Phase**:
+   - Generate embedding for user's query
+   - Search Vectorize for top-5 most relevant messages
+7. **Generation Phase**:
+   - Build context: RAG results (top-5) + recent messages (last 10)
+   - Call Llama 3.1 8B via AI Gateway
+8. **Response Phase**:
+   - Save AI response as message (sender: "ai-assistant")
+   - Broadcast to all connected participants
+   - Frontend displays as regular message
+
+### Rate Limiting Pattern (AI Gateway)
+- **AI Gateway Handles It**: aw-cf-ai gateway manages rate limiting
+- **Removed Local Logic**: No in-memory cache needed
+- **Batching Strategy**: Prevents hitting gateway limits
+  - 10 messages per batch
+  - 100ms delay between batches
+  - Successfully handles 100+ message conversations
+
+### Error Handling Pattern
+- **Validation Errors**: 400 Bad Request (invalid JSON, empty query, too long)
+- **Rate Limit**: 429 Too Many Requests
+- **AI Errors**: 503 Service Unavailable (timeout, AI service down)
+- **Unknown Errors**: 500 Internal Server Error
+- **Graceful Degradation**: Continue without history if fetch fails
+
+### AI Gateway Pattern (Implemented ✅)
+- **Gateway ID**: aw-cf-ai (hardcoded in call arguments)
+- **Configuration**: Passed to AI.run() via gateway parameter
+- **Metadata Tracking**: Each request tagged with conversationId, userId, operation type
+- **Benefits**: 
+  - Automatic rate limiting
+  - Response caching
+  - Cost tracking and analytics
+  - No local rate limiting code needed
+
+### Agent Pattern (Future)
 - **Proactive Assistant**: Monitors messages, detects patterns (scheduling discussions)
 - **Function calling**: LLM calls tools (extract action items, search conversations)
 - **Workflows**: Long-running tasks don't block Workers
 
-### Caching Pattern
-- **Workers KV**: Cache common AI responses
-- **AI Gateway**: Cache LLM responses, reduce API costs
-
-*Details will expand as we implement.*
+*Phase 6+ will add: Thread Summarization, Action Items, Priority Detection, Decision Tracking, Smart Search*

@@ -37,3 +37,21 @@ export interface OptimisticMessage {
 	status: 'sending';
 }
 
+/**
+ * AI Assistant Request
+ */
+export interface AiChatRequest {
+	query: string;
+	conversationId?: string;
+}
+
+/**
+ * AI Assistant Response
+ */
+export interface AiChatResponse {
+	success: boolean;
+	response?: string;
+	error?: string;
+	model?: string;
+}
+

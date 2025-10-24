@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { ClientMessage, ServerMessage, Message } from '../types';
 import { getPushTokensByUserId, updateConversationLastMessage, updateUserLastRead, getLastReadTimestamps } from '../db/schema';
 import { sendMessageNotification, sendReadReceiptNotification } from '../handlers/notifications';
+import { generateEmbedding, AI_MODELS } from '../handlers/ai';
 
 /**
  * Session metadata for each connected WebSocket
@@ -121,6 +122,392 @@ export class Conversation extends DurableObject<Env> {
 		}
 
 		return new Response('Not found', { status: 404 });
+	}
+
+	/**
+	 * RPC Method: Proactive Embedding
+	 * 
+	 * Starts embedding messages in the background when user opens AI panel.
+	 * This makes the actual query feel instant since embeddings are already cached.
+	 * 
+	 * @param conversationId - The conversation to embed
+	 * @returns Status of embedding process
+	 */
+	async startEmbedding(conversationId: string): Promise<{
+		success: boolean;
+		embeddedCount?: number;
+		totalMessages?: number;
+		error?: string;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			const allMessages = await this.getMessages(conversationId, 1000);
+			
+			if (allMessages.length === 0) {
+				return { success: true, embeddedCount: 0, totalMessages: 0 };
+			}
+
+			console.log(`[AI Proactive] Starting background embedding for ${allMessages.length} messages`);
+
+		// Embed messages in batches (parallel within batch, rate limits disabled)
+		const BATCH_SIZE = 50; // Large batches for maximum speed
+		const BATCH_DELAY_MS = 0; // No delay needed
+		const vectors = [];
+		let successCount = 0;
+
+		for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+			const batch = allMessages.slice(i, i + BATCH_SIZE);
+			
+			// Process batch in parallel
+			const batchResults = await Promise.allSettled(
+				batch.map(async (msg) => {
+					const embedding = await generateEmbedding(
+						this.env,
+						msg.content,
+						{
+							conversationId: msg.conversationId,
+							messageId: msg.id,
+							userId: msg.senderId,
+						}
+					);
+
+					return {
+						id: msg.id,
+						values: embedding,
+						metadata: {
+							conversationId: msg.conversationId,
+							senderId: msg.senderId,
+							content: msg.content,
+							timestamp: msg.createdAt,
+						}
+					};
+				})
+			);
+
+			// Collect successful results
+			for (const result of batchResults) {
+				if (result.status === 'fulfilled') {
+					vectors.push(result.value);
+					successCount++;
+				} else if (successCount === 0) {
+					console.error('Background embedding error:', result.reason);
+				}
+			}
+
+			// No delay needed - process all batches as fast as possible
+		}
+
+			if (vectors.length > 0) {
+				await this.env.VECTORIZE.upsert(vectors);
+			}
+
+			console.log(`[AI Proactive] Embedded ${successCount}/${allMessages.length} messages`);
+
+			return {
+				success: true,
+				embeddedCount: successCount,
+				totalMessages: allMessages.length,
+			};
+
+		} catch (error) {
+			console.error('[AI Proactive] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error',
+			};
+		}
+	}
+
+	/**
+	 * RPC Method: Ask AI with RAG
+	 * 
+	 * This method implements Retrieval-Augmented Generation:
+	 * 1. Embeds all messages in the conversation (on-demand, cached in Vectorize)
+	 * 2. Queries Vectorize for top-K most relevant messages to the query
+	 * 3. Calls Workers AI with both retrieved messages and recent context
+	 * 4. Saves AI response as a message in the conversation (visible to all)
+	 * 5. Broadcasts the AI message to all connected participants
+	 * 
+	 * @param query - The user's question to the AI
+	 * @param userId - The user asking the question
+	 * @returns AI response with metadata
+	 */
+	async askAI(query: string, userId: string, conversationId: string): Promise<{
+		success: boolean;
+		response?: string;
+		error?: string;
+		messageId?: string;
+		retrievedCount?: number;
+	}> {
+		try {
+			await this.initializeSQL();
+
+			console.log(`[AI RAG] User ${userId} asking: "${query.substring(0, 50)}..."`);
+
+			// Step 1: Get all messages from this conversation
+			const allMessages = await this.getMessages(conversationId, 1000);
+			
+			if (allMessages.length === 0) {
+				return {
+					success: false,
+					error: 'No messages in conversation to provide context'
+				};
+			}
+
+			console.log(`[AI RAG] Found ${allMessages.length} messages in conversation`);
+
+			// Step 2: Check if embeddings already exist (proactive embedding may have done this)
+			// Check by trying to get the first message by ID
+			let embeddingsExist = false;
+			if (allMessages.length > 0) {
+				try {
+					const firstMessageId = allMessages[0].id;
+					const existingVectors = await this.env.VECTORIZE.getByIds([firstMessageId]);
+					embeddingsExist = existingVectors.length > 0;
+					console.log(`[AI RAG] Embeddings ${embeddingsExist ? `already exist (${existingVectors.length} found)` : 'need to be created'}`);
+				} catch (error) {
+					console.log(`[AI RAG] Couldn't check existing embeddings (will create): ${error instanceof Error ? error.message : error}`);
+				}
+			}
+
+			// Only embed if embeddings don't exist
+			if (!embeddingsExist) {
+			console.log(`[AI RAG] Starting embedding for ${allMessages.length} messages...`);
+			const embeddingStartTime = Date.now();
+			const BATCH_SIZE = 50; // Large batches for maximum speed
+			const BATCH_DELAY_MS = 0; // No delay needed
+			const vectors = [];
+			let successCount = 0;
+			let failCount = 0;
+
+			for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+				const batch = allMessages.slice(i, i + BATCH_SIZE);
+				
+				// Process batch in parallel
+				const batchResults = await Promise.allSettled(
+					batch.map(async (msg) => {
+						const embedding = await generateEmbedding(
+							this.env,
+							msg.content,
+							{
+								conversationId: msg.conversationId,
+								messageId: msg.id,
+								userId: msg.senderId,
+							}
+						);
+
+						return {
+							id: msg.id,
+							values: embedding,
+							metadata: {
+								conversationId: msg.conversationId,
+								senderId: msg.senderId,
+								content: msg.content,
+								timestamp: msg.createdAt,
+							}
+						};
+					})
+				);
+
+				// Collect results
+				for (const result of batchResults) {
+					if (result.status === 'fulfilled') {
+						vectors.push(result.value);
+						successCount++;
+					} else {
+						failCount++;
+						if (failCount <= 3) {
+							console.error(`Failed to embed message:`, result.reason instanceof Error ? result.reason.message : result.reason);
+						}
+					}
+				}
+
+				// No delay needed - process all batches as fast as possible
+			}
+			
+			const embeddingDuration = Date.now() - embeddingStartTime;
+			console.log(`[AI RAG] Embedded ${successCount}/${allMessages.length} messages in ${embeddingDuration}ms (${failCount} failed)`);
+
+				if (vectors.length === 0) {
+					return {
+						success: false,
+						error: `Failed to embed messages. Rate limit or AI Gateway issue. Try again in a minute.`
+					};
+				}
+
+				try {
+					await this.env.VECTORIZE.upsert(vectors);
+					console.log(`[AI RAG] Successfully upserted ${vectors.length} vectors to Vectorize`);
+				} catch (upsertError) {
+					console.error('[AI RAG] Vectorize upsert failed:', upsertError);
+					return {
+						success: false,
+						error: 'Failed to store embeddings in Vectorize'
+					};
+				}
+			}
+
+			// Step 3: Generate embedding for the user's query
+			let queryEmbedding: number[];
+			try {
+				queryEmbedding = await generateEmbedding(
+					this.env,
+					query,
+					{ conversationId, userId, operation: 'query' }
+				);
+			} catch (queryEmbedError) {
+				console.error('[AI RAG] Failed to embed query:', queryEmbedError);
+				return {
+					success: false,
+					error: 'Failed to process your question. Please try again in a moment.'
+				};
+			}
+
+			// Step 4: Query Vectorize for top-5 most relevant messages
+			// Note: Try without filter first to debug, Vectorize may have indexing delay
+			let searchResults;
+			try {
+				searchResults = await this.env.VECTORIZE.query(queryEmbedding, {
+					topK: 5,
+					returnMetadata: 'all',
+				});
+				console.log(`[AI RAG] Retrieved ${searchResults.matches.length} relevant messages (no filter)`);
+				
+				// Filter results by conversationId in code
+				const filteredMatches = searchResults.matches.filter(
+					match => match.metadata && (match.metadata as any).conversationId === conversationId
+				);
+				searchResults = { ...searchResults, matches: filteredMatches };
+				console.log(`[AI RAG] After filtering: ${searchResults.matches.length} messages from this conversation`);
+			} catch (queryError) {
+				console.error('[AI RAG] Vectorize query failed:', queryError);
+				searchResults = { matches: [] };
+			}
+
+			// Step 5: Build context from retrieved messages + recent messages
+			const retrievedMessages = searchResults.matches
+				.filter(match => match.metadata)
+				.map(match => ({
+					content: (match.metadata as any).content as string,
+					sender: (match.metadata as any).senderId as string,
+					timestamp: (match.metadata as any).timestamp as string,
+					relevanceScore: match.score,
+				}));
+
+			const recentMessages = allMessages.slice(-10); // Last 10 messages (most recent)
+
+			// Format context for AI
+			const ragContext = retrievedMessages.map(msg => 
+				`[Relevant - Score: ${msg.relevanceScore?.toFixed(3)}] ${msg.sender}: ${msg.content}`
+			).join('\n');
+
+			const recentContext = recentMessages.map(msg =>
+				`[Recent] ${msg.senderId}: ${msg.content}`
+			).join('\n');
+
+			const fullContext = `MOST RELEVANT MESSAGES (RAG):\n${ragContext}\n\nRECENT MESSAGES:\n${recentContext}`;
+
+			// Step 6: Call Workers AI with RAG context
+			const systemPrompt = `You are an AI assistant helping with this conversation. You have access to the most relevant messages (via semantic search) and recent messages. Provide a helpful, concise answer.`;
+
+			const userPrompt = `Context from conversation:\n${fullContext}\n\nUser Question: ${query}`;
+
+			const aiResponse: any = await (this.env.AI as any).run(
+				'@cf/meta/llama-3.1-8b-instruct-fast',
+				{
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						{ role: 'user', content: userPrompt }
+					],
+					max_tokens: 512,
+					temperature: 0.7,
+				},
+				{
+					gateway: {
+						id: 'aw-cf-ai',
+						metadata: {
+							conversationId,
+							userId,
+							operation: 'rag-query',
+							retrievedCount: retrievedMessages.length,
+							totalMessages: allMessages.length,
+						}
+					}
+				}
+			);
+
+			const responseText = aiResponse.response as string;
+
+			if (!responseText) {
+				return {
+					success: false,
+					error: 'AI did not generate a response'
+				};
+			}
+
+			// Step 7: Save AI response as a message in the conversation
+			const aiMessageId = `msg_ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+			const now = new Date().toISOString();
+
+			await this.ctx.storage.sql.exec(
+				`INSERT INTO messages (id, conversation_id, sender_id, content, type, status, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				aiMessageId,
+				conversationId,
+				'ai-assistant', // Special sender ID for AI
+				responseText,
+				'text', // Message type
+				'sent',
+				now,
+				now
+			);
+
+			// Update D1 conversation last message
+			try {
+				await updateConversationLastMessage(
+					this.env.DB, 
+					conversationId, 
+					now, // timestamp
+					responseText, // messageContent
+					'ai-assistant' // senderId
+				);
+			} catch (error) {
+				console.error('Failed to update D1 last message:', error);
+			}
+
+			// Step 8: Broadcast AI message to all connected participants
+			const aiMessage: ServerMessage = {
+				type: 'new_message',
+				message: {
+					id: aiMessageId,
+					conversationId,
+					senderId: 'ai-assistant',
+					content: responseText,
+					type: 'text',
+					status: 'sent',
+					createdAt: now,
+					updatedAt: now,
+				}
+			};
+			this.broadcast(aiMessage);
+
+			console.log(`[AI RAG] AI response saved to DO, D1, and broadcast (${responseText.length} chars)`);
+
+			return {
+				success: true,
+				response: responseText,
+				messageId: aiMessageId,
+				retrievedCount: retrievedMessages.length,
+			};
+
+		} catch (error) {
+			console.error('[AI RAG] Error:', error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : 'Unknown error occurred'
+			};
+		}
 	}
 
 	/**

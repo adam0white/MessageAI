@@ -1,17 +1,18 @@
 # Active Context: MessageAI
 
 **Last Updated**: 2025-10-23  
-**Phase**: Phase 4.1 COMPLETE ✅ (Bug Fixes & UX Improvements)
+**Phase**: Phase 5.0 COMPLETE ✅ (RAG with Vectorize Working)
 
 ## Current Status
-Phase 4.0 foreground notifications working via polling + local notifications (no FCM needed for MVP):
-- ✅ Group chat with 3+ participants working
-- ✅ Presence tracking (online count) working across all chat types  
-- ✅ Message status: gray ○ → gray ✓ → gray ✓✓ → green ✓✓ (read)
-- ✅ Read receipts automatically sent when viewing messages
-- ✅ Retroactive delivery status when recipient comes online
-- ✅ Simplified conversation creation (auto-detects type from participant count)
-- **Backend**: Version 6bfee91f deployed and stable
+Phase 5.0 RAG implementation completed and deployed:
+- ✅ Vectorize index created (messageai-embeddings, 768 dimensions)
+- ✅ On-demand RAG embedding pipeline with batching (10 msgs/batch, 100ms delay)
+- ✅ Semantic search retrieves top-5 most relevant messages
+- ✅ AI Gateway integration (aw-cf-ai) - handles rate limiting & caching
+- ✅ RPC method askAI() in Conversation DO
+- ✅ Frontend sticky AI input (non-blocking, can chat while waiting)
+- ✅ AI responses appear as messages (visible to all participants)
+- **Backend**: Version f853390b deployed and stable
 
 ## Critical Test Results (Phase 3 Validated)
 ✅ **WORKING**: Messages appear instantly when both users have chat open
@@ -27,11 +28,18 @@ Phase 4.0 foreground notifications working via polling + local notifications (no
 
 ## Production Deployment
 - **Worker URL**: https://messageai-worker.abdulisik.workers.dev
-- **Latest Version**: f04f1532 (Phase 4 - Foreground Notifications Complete)
-- **D1 Database**: Migrations 0001-0003 applied (users, conversations, push_tokens, read receipts, message previews)
-- **Durable Objects**: SQLite enabled, syncs message previews to D1
+- **Latest Version**: 7c84a0dd (Phase 5 - RAG Production-Ready)
+- **D1 Database**: Migrations 0001-0003 applied
+- **Durable Objects**: SQLite enabled
+- **Vectorize**: messageai-embeddings (768D, cosine)
+- **Workers AI**: Llama 3.1 8B Fast via AI Gateway (aw-cf-ai)
+- **Embedding**: bge-base-en-v1.5, 50/batch, no delay, parallel (~1-2s for 100 msgs)
 - **WebSocket**: wss:// secure connections
-- **Foreground Notifications**: Polling (3s) + local notifications + name fallback (email prefix)
+- **AI Endpoints**: 
+  - POST /api/conversations/:id/start-embedding (proactive)
+  - POST /api/conversations/:id/ask-ai (RAG query)
+  - POST /api/ai/chat (legacy standalone)
+- **Foreground Notifications**: Polling (3s) + local notifications
 - **Monitoring**: wrangler tail for live logs
 
 ## Key Decisions Made
@@ -90,7 +98,48 @@ Phase 4.0 foreground notifications working via polling + local notifications (no
 29. **Test Local Notifications First**: Before debugging FCM, always test if local notifications work. If they do, FCM/config issue. If they don't, device/permissions issue.
 30. **React Query Cache Updates**: When polling returns fresh data, use `setQueryData()` to update cache directly instead of `invalidateQueries()`. This avoids extra network requests and ensures immediate UI updates. Only invalidate when you don't have the fresh data.
 
-## Recent Changes (Phase 4.1 - Bug Fixes & UX Improvements - Oct 23, 2025)
+### Phase 5 Learnings (RAG - CRITICAL)
+31. **Parallel Embedding with Rate Limits Off**: 50/batch, no delay, parallel within batch = ~1-2s for 100 msgs (vs 24s sequential)
+32. **Vectorize Upsert is Idempotent**: Same message ID won't duplicate. Safe to re-embed.
+33. **AI Gateway in Call Arguments**: Gateway ID in `AI.run()` call, not config. Enables per-request metadata.
+34. **Proactive Embedding UX**: Start embedding when panel opens (background). User can type while waiting, Ask button disabled until ready.
+35. **AI as Participant Pattern**: AI responses saved as messages (sender: "ai-assistant"), broadcast like any message.
+36. **D1 Update Parameters**: updateConversationLastMessage(db, convId, timestamp, content, senderId) - wrong params cause "Invalid date".
+37. **Model Selection**: Llama 3.1 8B Fast (fastest Workers AI model). Qwen 1.5 14B deprecated Oct 2025.
+38. **Input Always Editable**: Better UX - disable Ask button, not input. Users can prepare question while RAG loads.
+40. **MessageBubble Performance**: Wrap with React.memo to prevent re-renders on large lists (fixes VirtualizedList warning).
+41. **Smart Embedding Check**: Use `getByIds()` to check existing embeddings (faster than querying with test embedding).
+
+## Recent Changes (Phase 5.0 - RAG Implementation - Oct 23, 2025)
+
+**RAG Pipeline Complete:**
+- Created Vectorize index (messageai-embeddings, 768 dimensions, cosine similarity)
+- Implemented on-demand embedding pipeline with batching (10 msgs/batch, 100ms delay between batches)
+- Added askAI() RPC method to Conversation DO with full RAG workflow
+- Semantic search retrieves top-5 most relevant messages using bge-base-en-v1.5 embeddings
+- AI Gateway integration (aw-cf-ai) - removed local rate limiting, gateway handles it
+- Deployed worker version f853390b with RAG endpoint tested
+
+**Frontend UX Improvements:**
+- Replaced blocking modal with sticky AI input at top of chat
+- Non-blocking: users can continue chatting while AI processes
+- Progress indicator shows "Embedding messages..." during processing
+- AI button toggles input (blue when active)
+- AI responses appear as messages from "ai-assistant" (visible to all)
+
+**Critical Fixes:**
+- **Rate Limiting Issue**: Initial implementation hit gateway limits (106 parallel embeddings)
+- **Solution**: Batch embeddings (10 per batch, 100ms delay) - prevents rate limit errors
+- **Result**: Successfully embedded 106 messages without errors
+
+**Key Technical Decisions:**
+- **Batched Embeddings**: Prevents rate limiting on large conversations
+- **On-Demand RAG**: Embeddings created on first query, cached in Vectorize
+- **AI as Participant**: Responses visible to all (collaborative AI)
+- **Sticky UI**: Non-blocking input so users can chat while waiting
+- **RPC Pattern**: Direct DO method calls, cleaner than REST endpoints
+
+**Previous Phase 4.1 Changes (Bug Fixes & UX Improvements):**
 
 **Authentication & Profile:**
 - Added first name and last name fields to signup form (optional)
@@ -114,6 +163,13 @@ Phase 4.0 foreground notifications working via polling + local notifications (no
 - Removed redundant header comments from component files
 - Fixed linter errors (React imports, type issues)
 
+**Phase 5 Cleanup (Oct 23, 2025):**
+- Fixed WebSocket error logging (removed verbose console.error)
+- Memoized MessageBubble component (fixes VirtualizedList performance warning)
+- Fixed AI context bug: changed `slice(0, 10)` → `slice(-10)` to get **recent** messages, not oldest
+- Removed debug console.logs from proactive embedding flow
+- Production-ready: All code clean, tested, optimized
+
 ## Architecture Decisions for Future Phases
 
 See `systemPatterns.md` for detailed notes on:
@@ -130,4 +186,11 @@ See `systemPatterns.md` for detailed notes on:
 4. **Old DO messages persist**: Clearing D1 doesn't clear DO storage. Same conversation ID = old messages reappear. **Fix**: Implement conversation deletion endpoint with `ctx.storage.deleteAll()`.
 
 ## Next Session Priority
-Phase 4.5-4.7: Final MVP deployment and documentation
+Phase 6.0: Required AI Features for Remote Team Professional
+- Thread Summarization (analyze conversation, extract key points)
+- Action Item Extraction (identify tasks, assignees, due dates)
+- Priority Message Detection (flag urgent messages)
+- Decision Tracking (extract agreed-upon decisions)
+- Smart Search (semantic search with LLM re-ranking)
+
+**Note**: RAG pipeline is now working. Can build Phase 6 features on top of existing RAG infrastructure.

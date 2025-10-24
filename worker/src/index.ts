@@ -16,6 +16,7 @@ import {
 	handleRegisterPushToken, 
 	handleDeletePushToken 
 } from './handlers/push-tokens';
+import { handleAiChat } from './handlers/ai';
 
 export { Conversation };
 
@@ -86,6 +87,79 @@ export default {
 			if (token && request.method === 'DELETE') {
 				const response = await handleDeletePushToken(token, env);
 				return addCorsHeaders(response);
+			}
+		}
+
+		// AI Assistant endpoint (legacy, for standalone AI)
+		if (url.pathname === '/api/ai/chat' && request.method === 'POST') {
+			const response = await handleAiChat(request, env);
+			return addCorsHeaders(response);
+		}
+
+		// AI Proactive Embedding endpoint - starts embedding in background
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/start-embedding') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				
+				// Call the startEmbedding RPC method (non-blocking for user)
+				const result = await (stub as any).startEmbedding(conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Proactive embedding error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: 'Failed to start embedding' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+
+		// AI RAG endpoint - calls Durable Object's askAI RPC method
+		if (url.pathname.startsWith('/api/conversations/') && url.pathname.endsWith('/ask-ai') && request.method === 'POST') {
+			const conversationId = url.pathname.split('/')[3];
+			
+			if (!conversationId) {
+				return new Response('Conversation ID required', { status: 400 });
+			}
+
+			try {
+				const body = await request.json() as { query: string; userId: string };
+				
+				if (!body.query || !body.userId) {
+					return new Response(
+						JSON.stringify({ success: false, error: 'query and userId are required' }),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
+				}
+
+				// Get DO stub and call RPC method
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				
+				// Call the askAI RPC method (cast to any for RPC methods)
+				const result = await (stub as any).askAI(body.query, body.userId, conversationId);
+				
+				return addCorsHeaders(new Response(JSON.stringify(result), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('AI RAG request error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ 
+						success: false, 
+						error: error instanceof Error ? error.message : 'Unknown error' 
+					}),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
 			}
 		}
 
