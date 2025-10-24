@@ -15,6 +15,7 @@ import * as SecureStore from 'expo-secure-store';
 import { SQLiteProvider } from 'expo-sqlite';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { DB_NAME } from '../lib/db/schema';
+import { config } from '../lib/config';
 import React from 'react';
 
 // Create a client
@@ -27,8 +28,7 @@ const queryClient = new QueryClient({
 	},
 });
 
-// Clerk publishable key - you'll need to add this to your .env
-const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || '';
+const CLERK_PUBLISHABLE_KEY = config.clerkPublishableKey;
 
 /**
  * Token cache for Clerk using Expo Secure Store
@@ -56,10 +56,10 @@ export default function RootLayout() {
 		return (
 			<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
 				<Text style={{ fontSize: 16, color: 'red', textAlign: 'center' }}>
-					Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
+					Missing clerkPublishableKey in config.ts
 				</Text>
 				<Text style={{ fontSize: 14, color: '#666', marginTop: 10, textAlign: 'center' }}>
-					Please add your Clerk publishable key to .env
+					Please add your Clerk publishable key to config.ts
 				</Text>
 			</View>
 		);

@@ -45,10 +45,146 @@ export default {
 			return new Response(null, { headers: corsHeaders });
 		}
 
-		// Health check endpoint
+		// Landing page
 		if (url.pathname === '/') {
-			return new Response('MessageAI Worker is running!', {
-				headers: { 'Content-Type': 'text/plain', ...corsHeaders },
+			const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>MessageAI Backend</title>
+	<style>
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 20px;
+		}
+		.container {
+			background: white;
+			border-radius: 12px;
+			padding: 40px;
+			max-width: 600px;
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+		}
+		h1 {
+			color: #333;
+			margin-bottom: 10px;
+			font-size: 2em;
+		}
+		.subtitle {
+			color: #666;
+			margin-bottom: 30px;
+			font-size: 1.1em;
+		}
+		.status {
+			background: #10b981;
+			color: white;
+			padding: 8px 16px;
+			border-radius: 20px;
+			display: inline-block;
+			font-size: 0.9em;
+			margin-bottom: 20px;
+		}
+		.info {
+			background: #f3f4f6;
+			padding: 20px;
+			border-radius: 8px;
+			margin: 20px 0;
+		}
+		.info h3 {
+			color: #333;
+			margin-bottom: 10px;
+		}
+		.info p {
+			color: #666;
+			line-height: 1.6;
+		}
+		a {
+			color: #667eea;
+			text-decoration: none;
+			font-weight: 600;
+		}
+		a:hover {
+			text-decoration: underline;
+		}
+		.github-link {
+			display: inline-flex;
+			align-items: center;
+			gap: 8px;
+			background: #24292e;
+			color: white;
+			padding: 12px 24px;
+			border-radius: 6px;
+			margin-top: 20px;
+			transition: background 0.2s;
+		}
+		.github-link:hover {
+			background: #333;
+			text-decoration: none;
+		}
+		.endpoints {
+			margin-top: 30px;
+		}
+		.endpoints h3 {
+			color: #333;
+			margin-bottom: 15px;
+		}
+		.endpoint {
+			background: #f9fafb;
+			padding: 12px;
+			border-left: 3px solid #667eea;
+			margin-bottom: 10px;
+			font-family: 'Courier New', monospace;
+			font-size: 0.9em;
+			color: #333;
+		}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<span class="status">✓ Online</span>
+		<h1>🤖 MessageAI Backend</h1>
+		<p class="subtitle">Real-time messaging with AI capabilities</p>
+		
+		<div class="info">
+			<h3>About This Service</h3>
+			<p>
+				This is the backend API for MessageAI, a production-quality messaging application
+				built with Cloudflare Workers, Durable Objects, and Workers AI.
+			</p>
+		</div>
+
+		<div class="info">
+			<h3>Features</h3>
+			<p>
+				• Real-time WebSocket messaging<br>
+				• Durable Objects for message persistence<br>
+				• AI-powered chat assistance (RAG)<br>
+				• Thread summarization & action items<br>
+				• Smart semantic search<br>
+				• Multi-step AI agent for event planning
+			</p>
+		</div>
+
+		<a href="https://github.com/adam0white/MessageAI" class="github-link" target="_blank">
+			<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+				<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+			</svg>
+			View Source on GitHub
+		</a>
+	</div>
+</body>
+</html>
+			`.trim();
+			
+			return new Response(html, {
+				headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders },
 			});
 		}
 

@@ -11,8 +11,9 @@
 
 import type { ClientMessage, ServerMessage } from './types';
 import { useNetworkStore } from '../stores/network';
+import { config } from '../config';
 
-const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'http://localhost:8787';
+const WORKER_URL = config.workerUrl;
 
 type MessageHandler = (message: ServerMessage) => void;
 type ConnectionEventHandler = () => void;

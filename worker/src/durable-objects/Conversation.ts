@@ -2172,25 +2172,37 @@ Generate realistic venue names (no fake addresses).`;
 						await this.handleTyping(ws, session, data);
 						break;
 					
-					default:
-						console.warn(`Unknown message type: ${(data as any).type}`);
-						const errorResponse: ServerMessage = {
-							type: 'error',
-							code: 'UNKNOWN_MESSAGE_TYPE',
-							message: `Unknown message type: ${(data as any).type}`,
-						};
-						ws.send(JSON.stringify(errorResponse));
+				default:
+					console.warn(`Unknown message type: ${(data as any).type}`);
+					try {
+						if (ws.readyState === WebSocket.OPEN) {
+							const errorResponse: ServerMessage = {
+								type: 'error',
+								code: 'UNKNOWN_MESSAGE_TYPE',
+								message: `Unknown message type: ${(data as any).type}`,
+							};
+							ws.send(JSON.stringify(errorResponse));
+						}
+					} catch (e) {
+						// Connection closed
+					}
 				}
-			} catch (error) {
-				console.error('Failed to parse message:', error);
-				const errorResponse: ServerMessage = {
-					type: 'error',
-					code: 'PARSE_ERROR',
-					message: 'Failed to parse message',
-					details: error
-				};
-				ws.send(JSON.stringify(errorResponse));
+		} catch (error) {
+			console.error('Failed to parse message:', error);
+			try {
+				if (ws.readyState === WebSocket.OPEN) {
+					const errorResponse: ServerMessage = {
+						type: 'error',
+						code: 'PARSE_ERROR',
+						message: 'Failed to parse message',
+						details: error
+					};
+					ws.send(JSON.stringify(errorResponse));
+				}
+			} catch (e) {
+				// Connection closed - can't send error
 			}
+		}
 		}
 	}
 
@@ -2228,7 +2240,7 @@ Generate realistic venue names (no fake addresses).`;
 				session.userId // Sender ID
 			);
 
-			// Send confirmation to sender
+			// Send confirmation to sender (check if still connected)
 			const confirmationResponse: ServerMessage = {
 				type: 'message_status',
 				clientId: data.clientId,
@@ -2236,7 +2248,14 @@ Generate realistic venue names (no fake addresses).`;
 				status: 'sent',
 				serverTimestamp: now,
 			};
-			ws.send(JSON.stringify(confirmationResponse));
+			
+			try {
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(JSON.stringify(confirmationResponse));
+				}
+			} catch (e) {
+				// Sender disconnected before confirmation - message still saved
+			}
 
 			// Broadcast to all other participants
 			const broadcastMessage: ServerMessage = {
@@ -2259,20 +2278,34 @@ Generate realistic venue names (no fake addresses).`;
 					status: 'delivered',
 					serverTimestamp: now,
 				};
-				// Send to sender and broadcast to all (in case sender reconnects later)
-				ws.send(JSON.stringify(deliveredStatus));
+				// Send to sender (if still connected) and broadcast to all
+				try {
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(JSON.stringify(deliveredStatus));
+					}
+				} catch (e) {
+					// Sender disconnected - status will sync on reconnect
+				}
 				this.broadcast(deliveredStatus);
 			}
 
 		} catch (error) {
 			console.error('Error handling send_message:', error);
-			const errorResponse: ServerMessage = {
-				type: 'error',
-				code: 'SEND_MESSAGE_FAILED',
-				message: 'Failed to send message',
-				details: error,
-			};
-			ws.send(JSON.stringify(errorResponse));
+			
+			// Try to send error response if connection still open
+			try {
+				if (ws.readyState === WebSocket.OPEN) {
+					const errorResponse: ServerMessage = {
+						type: 'error',
+						code: 'SEND_MESSAGE_FAILED',
+						message: 'Failed to send message',
+						details: error,
+					};
+					ws.send(JSON.stringify(errorResponse));
+				}
+			} catch (e) {
+				// Connection closed - can't notify client
+			}
 		}
 	}
 
@@ -2439,6 +2472,7 @@ Generate realistic venue names (no fake addresses).`;
 	private broadcast(message: ServerMessage, excludeUserId?: string): number {
 		const serialized = JSON.stringify(message);
 		let sentCount = 0;
+		const toRemove: WebSocket[] = [];
 
 		for (const [ws, session] of this.sessions.entries()) {
 			// Skip sender if excludeUserId is provided
@@ -2447,14 +2481,25 @@ Generate realistic venue names (no fake addresses).`;
 			}
 
 			try {
-				ws.send(serialized);
-				sentCount++;
+				// Check if WebSocket is still open before sending
+				if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+					ws.send(serialized);
+					sentCount++;
+				} else {
+					// Connection is closing or closed, mark for removal
+					toRemove.push(ws);
+				}
 			} catch (error) {
-				console.error(`Failed to send to user ${session.userId}:`, error);
-				// Remove broken connections
-				this.sessions.delete(ws);
+				// Silently handle closed connections - this is normal during high volume
+				if (!(error as Error).toString().includes('after close')) {
+					console.error(`Failed to send to user ${session.userId}:`, error);
+				}
+				toRemove.push(ws);
 			}
 		}
+
+		// Clean up broken connections
+		toRemove.forEach(ws => this.sessions.delete(ws));
 
 		return sentCount;
 	}

@@ -50,9 +50,8 @@ export function useReadReceipts(conversationId: string) {
 					return newMap;
 				});
 
-				// Persist to database
-				saveReadReceipt(db, message.messageId, message.userId, message.readAt)
-					.catch(err => console.error('Failed to save read receipt:', err));
+			// Persist to database (will silently skip if message doesn't exist yet)
+			saveReadReceipt(db, message.messageId, message.userId, message.readAt);
 			}
 		});
 
@@ -102,6 +101,7 @@ export function useReadReceipts(conversationId: string) {
 
 /**
  * Save read receipt to local database
+ * Silently fails if message doesn't exist yet (will sync when message arrives)
  */
 async function saveReadReceipt(
 	db: any,
@@ -109,11 +109,28 @@ async function saveReadReceipt(
 	userId: string,
 	readAt: string
 ): Promise<void> {
-	await db.runAsync(
-		`INSERT OR IGNORE INTO read_receipts (message_id, user_id, read_at)
-		VALUES (?, ?, ?)`,
-		[messageId, userId, readAt]
-	);
+	try {
+		// Check if message exists first to avoid FK constraint errors
+		const messageExists = await db.getFirstAsync(
+			'SELECT 1 FROM messages WHERE id = ?',
+			[messageId]
+		);
+		
+		if (messageExists) {
+			await db.runAsync(
+				`INSERT OR IGNORE INTO read_receipts (message_id, user_id, read_at)
+				VALUES (?, ?, ?)`,
+				[messageId, userId, readAt]
+			);
+		}
+		// If message doesn't exist, silently skip - receipt will sync when message arrives
+	} catch (err) {
+		// Silently handle FOREIGN KEY constraint errors during rapid messaging
+		const error = err as Error;
+		if (!error.message?.includes('FOREIGN KEY')) {
+			console.error('Failed to save read receipt:', error);
+		}
+	}
 }
 
 /**

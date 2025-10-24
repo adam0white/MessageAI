@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
 	View, 
 	FlatList, 
@@ -17,6 +17,7 @@ import { useLocalSearchParams, Stack } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { MessageBubble } from '../../../components/MessageBubble';
 import { useMessages } from '../../../hooks/useMessages';
+import type { Message } from '../../../lib/api/types';
 import { useConversation } from '../../../hooks/useConversations';
 import { usePresence } from '../../../hooks/usePresence';
 import { useReadReceipts } from '../../../hooks/useReadReceipts';
@@ -24,8 +25,10 @@ import { useTyping } from '../../../hooks/useTyping';
 import { wsClient } from '../../../lib/api/websocket';
 import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
+import { insertMessage } from '../../../lib/db/queries';
+import { config } from '../../../lib/config';
 
-const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'https://messageai-worker.abdulisik.workers.dev';
+const WORKER_URL = config.workerUrl;
 
 type AiFeature = 'ask' | 'summarize' | 'actions' | 'priority' | 'decisions' | 'search' | 'planner';
 
@@ -108,13 +111,33 @@ export default function ChatScreen() {
 	const [showMemberList, setShowMemberList] = useState(false);
 	const [lastSeenData, setLastSeenData] = useState<Record<string, string>>({});
 	
+	// Test mode states (Phase 9)
+	const [showTestMode, setShowTestMode] = useState(false);
+	const [isGeneratingTestData, setIsGeneratingTestData] = useState(false);
+	const headerTapCount = useRef(0);
+	const headerTapTimeout = useRef<NodeJS.Timeout | null>(null);
+	
 	const flatListRef = useRef<FlatList>(null);
 	const previousMessageCountRef = useRef(0);
 	const isInitialLoadRef = useRef(true);
 	const hasStartedEmbedding = useRef(false);
 	
-	const { messages, isLoading, sendMessage, isSending, refetch } = useMessages(conversationId);
+	const { messages: rawMessages, isLoading, sendMessage, isSending, refetch, clearAndReload } = useMessages(conversationId);
 	const { conversation } = useConversation(conversationId);
+	
+	// Deduplicate and reverse messages for inverted FlatList
+	// Inverted list shows index 0 at bottom, so we reverse to show newest first
+	const messages = React.useMemo(() => {
+		const seen = new Set<string>();
+		const deduplicated = rawMessages.filter((msg: Message) => {
+			const key = msg.id || msg.clientId;
+			if (!key || seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+		// Reverse so newest message is at index 0 (bottom of inverted list)
+		return [...deduplicated].reverse();
+	}, [rawMessages]);
 	const { onlineUserIds, onlineCount } = usePresence(conversationId);
 	const { markAsRead } = useReadReceipts(conversationId);
 	const { typingUserIds, startTyping, stopTyping } = useTyping(conversationId, userId || '');
@@ -212,24 +235,18 @@ export default function ChatScreen() {
 		}
 	}, [messages, userId, markAsRead]);
 
-	// Scroll to bottom only when new messages arrive (not on initial load or refresh)
-	useEffect(() => {
-		if (messages.length > 0 && flatListRef.current) {
-			// Only scroll if:
-			// 1. Initial load (first time opening chat)
-			// 2. Message count increased (new message arrived)
-			const shouldScroll = isInitialLoadRef.current || messages.length > previousMessageCountRef.current;
-			
-			if (shouldScroll) {
-				setTimeout(() => {
-					flatListRef.current?.scrollToEnd({ animated: !isInitialLoadRef.current });
-				}, 100);
-				isInitialLoadRef.current = false;
-			}
-			
-			previousMessageCountRef.current = messages.length;
-		}
-	}, [messages.length]);
+	// Scroll position management
+	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
+	// With inverted list, track if user scrolled UP (away from newest messages at bottom of screen)
+	const handleScroll = (event: any) => {
+		const offsetY = event.nativeEvent.contentOffset.y;
+		// In inverted list, scrolling up (offsetY increases) means going to older messages
+		const scrolledUp = offsetY > 100;
+		setShowScrollToBottom(scrolledUp && messages.length > 5);
+	};
+	
+	// No auto-scroll needed! Inverted list with reversed data naturally shows newest messages
 
 	const handleSend = () => {
 		const trimmedText = inputText.trim();
@@ -589,6 +606,81 @@ export default function ChatScreen() {
 		);
 	};
 
+	// Test mode functions (Phase 9)
+	const handleHeaderTap = () => {
+		headerTapCount.current += 1;
+		
+		if (headerTapTimeout.current) {
+			clearTimeout(headerTapTimeout.current);
+		}
+		
+		if (headerTapCount.current >= 3) {
+			setShowTestMode(!showTestMode);
+			headerTapCount.current = 0;
+		} else {
+			headerTapTimeout.current = setTimeout(() => {
+				headerTapCount.current = 0;
+			}, 1000);
+		}
+	};
+
+	const sendRapidMessages = async () => {
+		if (!userId) return;
+		
+		Alert.alert(
+			'Rapid Test',
+			'Send 20 messages rapidly?',
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{ 
+					text: 'Send', 
+					onPress: async () => {
+						for (let i = 1; i <= 20; i++) {
+							sendMessage({ 
+								content: `Rapid test ${i}/20 - ${new Date().toISOString()}`,
+								type: 'text'
+							});
+							await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay between sends
+						}
+					}
+				}
+			]
+		);
+	};
+
+	const sendPerformanceMessages = async () => {
+		if (!userId) return;
+		
+		Alert.alert(
+			'Performance Test',
+			'Send 100 messages via WebSocket?\n\n⚠️ Warning: These messages will be sent to all participants and cannot be deleted.',
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{ 
+					text: 'Send 100', 
+					style: 'destructive',
+					onPress: async () => {
+						setIsGeneratingTestData(true);
+						try {
+							for (let i = 1; i <= 100; i++) {
+								sendMessage({ 
+									content: `Perf test ${i}/100`,
+									type: 'text'
+								});
+								await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+							}
+							Alert.alert('Sent', '100 messages sent');
+						} catch (error) {
+							Alert.alert('Error', error instanceof Error ? error.message : 'Failed');
+						} finally {
+							setIsGeneratingTestData(false);
+						}
+					}
+				}
+			]
+		);
+	};
+
 	// Get conversation name for header
 	const getHeaderTitle = () => {
 		if (!conversation) return 'Chat';
@@ -615,6 +707,13 @@ export default function ChatScreen() {
 			<Stack.Screen 
 				options={{
 					title: getHeaderTitle(),
+					headerTitle: () => (
+						<TouchableOpacity onPress={handleHeaderTap} activeOpacity={0.7}>
+							<Text style={{ fontSize: 17, fontWeight: '600' }}>
+								{getHeaderTitle()}
+							</Text>
+						</TouchableOpacity>
+					),
 					headerRight: () => (
 						<View style={styles.headerRight}>
 							<TouchableOpacity 
@@ -642,6 +741,108 @@ export default function ChatScreen() {
 				behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
 				keyboardVerticalOffset={90}
 			>
+				{/* Test Mode Panel (Phase 9) - Tap header 3x to toggle */}
+				{showTestMode && (
+					<View style={styles.testModeContainer}>
+						<View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+							<Text style={{ fontSize: 14, fontWeight: '600', color: '#FF9500' }}>
+								🧪 Debug Panel
+							</Text>
+							<TouchableOpacity onPress={() => setShowTestMode(false)}>
+								<Text style={{ fontSize: 18, color: '#666' }}>✕</Text>
+							</TouchableOpacity>
+						</View>
+						
+						{/* Debug Info */}
+						<View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 6, marginBottom: 10 }}>
+							<Text style={{ fontSize: 11, color: '#666', fontFamily: 'monospace' }}>
+								Conversation ID: {conversationId}
+							</Text>
+							<Text style={{ fontSize: 11, color: '#666', fontFamily: 'monospace', marginTop: 2 }}>
+								WebSocket: {wsStatus === 'connected' ? '🟢 Connected' : 
+									wsStatus === 'connecting' ? '🟡 Connecting' : 
+									wsStatus === 'reconnecting' ? '🟡 Reconnecting' : '🔴 Disconnected'}
+							</Text>
+							<Text style={{ fontSize: 11, color: '#666', fontFamily: 'monospace', marginTop: 2 }}>
+								Messages: {messages.length} | Online: {onlineCount}
+							</Text>
+						</View>
+						
+					{/* Test Buttons */}
+					<View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+						<TouchableOpacity
+							onPress={sendRapidMessages}
+							disabled={isSending || isGeneratingTestData}
+							style={{
+								flex: 1,
+								backgroundColor: isSending ? '#ccc' : '#007AFF',
+								padding: 12,
+								borderRadius: 8,
+								alignItems: 'center',
+							}}
+						>
+							<Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+								Send 20 Rapid
+							</Text>
+						</TouchableOpacity>
+						
+						<TouchableOpacity
+							onPress={sendPerformanceMessages}
+							disabled={isSending || isGeneratingTestData}
+							style={{
+								flex: 1,
+								backgroundColor: isGeneratingTestData ? '#ccc' : '#FF9500',
+								padding: 12,
+								borderRadius: 8,
+								alignItems: 'center',
+							}}
+						>
+							<Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+								{isGeneratingTestData ? 'Sending...' : 'Send 100'}
+							</Text>
+						</TouchableOpacity>
+					</View>
+					
+					{/* Clear & Reload Button */}
+					<TouchableOpacity
+						onPress={() => {
+							Alert.alert(
+								'Clear & Reload',
+								'Delete all local messages and reload from server?\n\nThis will fix duplicate message issues.',
+								[
+									{ text: 'Cancel', style: 'cancel' },
+									{ 
+										text: 'Clear & Reload', 
+										style: 'destructive',
+										onPress: async () => {
+											try {
+												await clearAndReload();
+											} catch (err) {
+												Alert.alert('Error', 'Failed to clear messages');
+											}
+										}
+									}
+								]
+							);
+						}}
+						style={{
+							backgroundColor: '#DC3545',
+							padding: 12,
+							borderRadius: 8,
+							alignItems: 'center',
+						}}
+					>
+						<Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+							🗑️ Clear Local DB & Reload
+						</Text>
+					</TouchableOpacity>
+					
+					<Text style={{ fontSize: 10, color: '#999', marginTop: 6, fontStyle: 'italic', textAlign: 'center' }}>
+						Tap title 3x to toggle
+					</Text>
+					</View>
+				)}
+
 				{/* AI Panel - Sticky at top */}
 				{showAiInput && (
 					<View style={styles.aiInputContainer}>
@@ -831,10 +1032,11 @@ export default function ChatScreen() {
 							<ActivityIndicator size="large" color="#0084ff" />
 						</View>
 					) : (
-						<FlatList
-							ref={flatListRef}
-							data={messages}
-							keyExtractor={(item) => item.id}
+								<FlatList
+									ref={flatListRef}
+									data={messages}
+									inverted
+									keyExtractor={(item, index) => item.id || item.clientId || `msg_${index}`}
 							renderItem={({ item }) => (
 								<MessageBubble 
 									message={item} 
@@ -844,13 +1046,8 @@ export default function ChatScreen() {
 							contentContainerStyle={messages.length === 0 ? styles.emptyMessageList : styles.messageList}
 							onRefresh={refetch}
 							refreshing={isLoading}
-							onScrollToIndexFailed={(info) => {
-								// Fallback: scroll to offset
-								flatListRef.current?.scrollToOffset({
-									offset: info.averageItemLength * info.index,
-									animated: true,
-								});
-							}}
+							onScroll={handleScroll}
+							scrollEventThrottle={16}
 							ListEmptyComponent={
 								<View style={styles.emptyState}>
 									<Text style={styles.emptyText}>No messages yet</Text>
@@ -860,14 +1057,27 @@ export default function ChatScreen() {
 						/>
 					)}
 
-				{/* Typing Indicator */}
-				{typingUserIds.length > 0 && (
-					<View style={styles.typingIndicatorContainer}>
-						<Text style={styles.typingIndicatorText}>{getTypingText()}</Text>
-					</View>
-				)}
+			{/* Scroll to Bottom Button */}
+			{showScrollToBottom && (
+				<TouchableOpacity
+					style={styles.scrollToBottomButton}
+					onPress={() => {
+						// In inverted list, scrollToOffset(0) goes to newest messages
+						flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+					}}
+				>
+					<Text style={{ fontSize: 20, color: '#fff' }}>↓</Text>
+				</TouchableOpacity>
+			)}
 
-				<View style={styles.inputContainer}>
+			{/* Typing Indicator */}
+			{typingUserIds.length > 0 && (
+				<View style={styles.typingIndicatorContainer}>
+					<Text style={styles.typingIndicatorText}>{getTypingText()}</Text>
+				</View>
+			)}
+
+			<View style={styles.inputContainer}>
 					<TextInput
 						style={styles.input}
 						value={inputText}
@@ -1195,6 +1405,10 @@ const styles = StyleSheet.create({
 		flexGrow: 1,
 		justifyContent: 'flex-end',
 	},
+	messageListInverted: {
+		paddingVertical: 8,
+		flexGrow: 1,
+	},
 	emptyMessageList: {
 		flexGrow: 1,
 		justifyContent: 'center',
@@ -1294,6 +1508,28 @@ const styles = StyleSheet.create({
 		fontWeight: '500',
 	},
 	// AI Input Styles (sticky at top)
+	scrollToBottomButton: {
+		position: 'absolute',
+		right: 20,
+		bottom: 80,
+		width: 44,
+		height: 44,
+		borderRadius: 22,
+		backgroundColor: '#007AFF',
+		justifyContent: 'center',
+		alignItems: 'center',
+		shadowColor: '#000',
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.25,
+		shadowRadius: 3.84,
+		elevation: 5,
+	},
+	testModeContainer: {
+		backgroundColor: '#FFF9E6',
+		borderBottomWidth: 1,
+		borderBottomColor: '#FFD700',
+		padding: 12,
+	},
 	aiInputContainer: {
 		backgroundColor: '#f8f9fa',
 		borderBottomWidth: 1,

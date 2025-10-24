@@ -15,8 +15,9 @@ import {
 	upsertUser 
 } from '../lib/db/queries';
 import { useAuthStore } from '../lib/stores/auth';
+import { config } from '../lib/config';
 
-const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'http://localhost:8787';
+const WORKER_URL = config.workerUrl;
 
 /**
  * Hook for fetching user's conversations

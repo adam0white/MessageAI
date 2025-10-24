@@ -4,7 +4,9 @@ import { Stack } from 'expo-router';
 import { useConversations } from '../../hooks/useConversations';
 import type { AiChatRequest, AiChatResponse } from '../../lib/api/types';
 
-const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'https://messageai-worker.abdulisik.workers.dev';
+import { config } from '../../lib/config';
+
+const WORKER_URL = config.workerUrl;
 
 interface ChatMessage {
 	id: string;

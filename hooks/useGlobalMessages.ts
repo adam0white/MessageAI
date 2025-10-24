@@ -17,8 +17,9 @@ import * as Device from 'expo-device';
 import { useAuthStore } from '../lib/stores/auth';
 import { useQueryClient } from '@tanstack/react-query';
 import { upsertConversation } from '../lib/db/queries';
+import { config } from '../lib/config';
 
-const WORKER_URL = process.env.EXPO_PUBLIC_WORKER_URL || 'http://localhost:8787';
+const WORKER_URL = config.workerUrl;
 const POLLING_INTERVAL = 3000; // 3 seconds
 
 // Set notification handler for foreground notifications

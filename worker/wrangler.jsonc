@@ -7,8 +7,16 @@
 	"name": "messageai-worker",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-10-14",
+	"workers_dev": false,
+	"routes": [
+		{
+			"pattern": "message.adamwhite.work",
+			"custom_domain": true
+		}
+	],
 	"observability": {
-		"enabled": true
+		"enabled": true,
+		"head_sampling_rate": 0.2
 	},
 	/**
 	 * Durable Objects

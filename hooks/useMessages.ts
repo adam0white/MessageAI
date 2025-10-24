@@ -30,8 +30,8 @@ export function useMessages(conversationId: string) {
 	const messagesQuery = useQuery({
 		queryKey: ['messages', conversationId],
 		queryFn: async () => {
-			// Just return local cache - history request is separate
-			return await getMessagesByConversation(db, conversationId, 50);
+			// Return all local messages (no limit)
+			return await getMessagesByConversation(db, conversationId, 10000);
 		},
 		staleTime: 0, // Always consider stale to refresh on focus
 		refetchOnWindowFocus: true,
@@ -43,7 +43,7 @@ export function useMessages(conversationId: string) {
 				wsClient.send({
 					type: 'get_history',
 					conversationId,
-					limit: 50,
+					limit: 1000, // Fetch up to 1000 messages
 				});
 			}
 		};
@@ -168,7 +168,7 @@ export function useMessages(conversationId: string) {
 					
 					// Force re-render by invalidating query
 					queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
-				} else if (message.type == 'new_message') {
+				} else if (message.type === 'new_message') {
 					const incomingMessage = message.message;
 					
 					if (incomingMessage.conversationId === conversationId) {
@@ -194,22 +194,28 @@ export function useMessages(conversationId: string) {
 					let updatedCount = 0;
 					
 					for (const msg of message.messages) {
-						// Check if message already exists
-						if (currentIds.has(msg.id) || currentClientIds.has(msg.id)) {
+						// Check if message already exists by ID or clientId
+						const existsByClientId = msg.clientId && currentClientIds.has(msg.clientId);
+						const existsById = currentIds.has(msg.id);
+						
+						if (existsById || existsByClientId) {
 							// Message exists - check if status changed (read receipts while offline)
-							const existingMsg = currentMessages.find(m => m.id === msg.id || m.clientId === msg.id);
+							const existingMsg = currentMessages.find(m => 
+								m.id === msg.id || 
+								(msg.clientId && m.clientId === msg.clientId)
+							);
 							if (existingMsg && existingMsg.status !== msg.status) {
 								await updateMessageStatusQuery(db, msg.id, msg.status).catch(() => {});
 								updatedCount++;
 							}
 						} else {
-							// New message - insert it
+							// New message - insert it (catch duplicates at DB level)
 							await insertMessage(db, msg).catch(() => {});
 							newCount++;
 						}
 					}
 					
-					// Invalidate to refresh from DB
+					// Refresh from DB only if we actually inserted new messages
 					if (newCount > 0 || updatedCount > 0) {
 						queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
 					}
@@ -239,6 +245,29 @@ export function useMessages(conversationId: string) {
 		};
 	}, [conversationId, db, queryClient, userId]);
 
+	// Clear all messages and reload from server
+	const clearAndReload = async () => {
+		try {
+			// Delete all messages for this conversation from local DB
+			await db.runAsync('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+			
+			// Clear the query cache
+			queryClient.setQueryData<Message[]>(['messages', conversationId], []);
+			
+			// Request fresh history from server
+			if (wsClient.isConnected()) {
+				wsClient.send({
+					type: 'get_history',
+					conversationId,
+					limit: 1000,
+				});
+			}
+		} catch (err) {
+			console.error('Failed to clear and reload messages:', err);
+			throw err;
+		}
+	};
+
 	return {
 		messages: messagesQuery.data || [],
 		isLoading: messagesQuery.isLoading,
@@ -247,6 +276,7 @@ export function useMessages(conversationId: string) {
 		sendMessage: sendMessageMutation.mutate,
 		isSending: sendMessageMutation.isPending,
 		refetch: messagesQuery.refetch,
+		clearAndReload,
 	};
 }
 
