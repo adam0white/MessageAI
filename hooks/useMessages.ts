@@ -30,11 +30,13 @@ export function useMessages(conversationId: string) {
 	const messagesQuery = useQuery({
 		queryKey: ['messages', conversationId],
 		queryFn: async () => {
-			// Return all local messages (no limit)
-			return await getMessagesByConversation(db, conversationId, 10000);
+			// Return all local messages (limited to 5000 for performance)
+			return await getMessagesByConversation(db, conversationId, 5000);
 		},
-		staleTime: 0, // Always consider stale to refresh on focus
-		refetchOnWindowFocus: true,
+		staleTime: 30000, // Consider fresh for 30 seconds (stale-while-revalidate)
+		gcTime: 5 * 60 * 1000, // Cache for 5 minutes before garbage collection
+		refetchOnWindowFocus: false, // Don't refetch on focus (we have WebSocket)
+		refetchOnReconnect: true, // Do refetch on reconnect
 	});
 
 	useEffect(() => {
@@ -145,7 +147,7 @@ export function useMessages(conversationId: string) {
 							status: message.status,
 						}).catch(err => console.error('useMessages: Failed to update message in DB:', err));
 						
-						// Update cache immediately
+						// Update cache immediately (no invalidation needed - setQueryData triggers re-render)
 						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
 							return old.map(msg => 
 								msg.clientId === message.clientId
@@ -158,7 +160,7 @@ export function useMessages(conversationId: string) {
 						await updateMessageStatusQuery(db, message.messageId, message.status)
 							.catch(err => console.error('useMessages: Failed to update status in DB:', err));
 						
-						// Update cache immediately
+						// Update cache immediately (no invalidation needed)
 						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
 							return old.map(msg => 
 								msg.id === message.messageId
@@ -167,9 +169,6 @@ export function useMessages(conversationId: string) {
 							);
 						});
 					}
-					
-					// Force re-render by invalidating query
-					queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
 				} else if (message.type === 'new_message') {
 					const incomingMessage = message.message;
 					
@@ -192,8 +191,8 @@ export function useMessages(conversationId: string) {
 					const currentIds = new Set(currentMessages.map(m => m.id));
 					const currentClientIds = new Set(currentMessages.map(m => m.clientId).filter(Boolean));
 					
-					let newCount = 0;
-					let updatedCount = 0;
+					const newMessages: Message[] = [];
+					const updatedMessages: { id: string; status: Message['status'] }[] = [];
 					
 					for (const msg of message.messages) {
 						// Check if message already exists by ID or clientId
@@ -208,24 +207,42 @@ export function useMessages(conversationId: string) {
 							);
 							if (existingMsg && existingMsg.status !== msg.status) {
 								await updateMessageStatusQuery(db, msg.id, msg.status).catch(() => {});
-								updatedCount++;
+								updatedMessages.push({ id: msg.id, status: msg.status });
 							}
 						} else {
 							// New message - insert it (catch duplicates at DB level)
 							await insertMessage(db, msg).catch(() => {});
-							newCount++;
+							newMessages.push(msg);
 						}
 					}
 					
-					// Refresh from DB only if we actually inserted new messages
-					if (newCount > 0 || updatedCount > 0) {
-						queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
+					// Only update cache if we have changes
+					if (newMessages.length > 0 || updatedMessages.length > 0) {
+						queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
+							let updated = [...old];
+							
+							// Add new messages
+							if (newMessages.length > 0) {
+								updated = [...updated, ...newMessages];
+							}
+							
+							// Update statuses
+							if (updatedMessages.length > 0) {
+								const statusMap = new Map(updatedMessages.map(u => [u.id, u.status]));
+								updated = updated.map(msg => {
+									const newStatus = statusMap.get(msg.id);
+									return newStatus ? { ...msg, status: newStatus } : msg;
+								});
+							}
+							
+							return updated;
+						});
 					}
 				} else if (message.type === 'message_read') {
-					
 					await updateMessageStatusQuery(db, message.messageId, 'read')
 						.catch(err => console.error('useMessages: Failed to update read status:', err));
 					
+					// Update cache immediately (no invalidation needed)
 					queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
 						return old.map(msg => 
 							msg.id === message.messageId
@@ -233,9 +250,6 @@ export function useMessages(conversationId: string) {
 								: msg
 						);
 					});
-					
-					// Force re-render
-					queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
 				}
 			} catch (error) {
 				console.error('Error handling WebSocket message:', error);
@@ -250,8 +264,10 @@ export function useMessages(conversationId: string) {
 	// Clear all messages and reload from server
 	const clearAndReload = async () => {
 		try {
-			// Delete all messages for this conversation from local DB
-			await db.runAsync('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+			// Delete all messages for this conversation from local DB (native only)
+			if (db && typeof db.runAsync === 'function') {
+				await db.runAsync('DELETE FROM messages WHERE conversation_id = ?', [conversationId]);
+			}
 			
 			// Clear the query cache
 			queryClient.setQueryData<Message[]>(['messages', conversationId], []);

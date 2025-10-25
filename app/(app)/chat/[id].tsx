@@ -131,13 +131,10 @@ export default function ChatScreen() {
 	const { messages: rawMessages, isLoading, sendMessage, isSending, refetch, clearAndReload } = useMessages(conversationId);
 	const { conversation } = useConversation(conversationId);
 	
-	// Web pagination: Show only recent messages initially, load more on scroll
-	const [visibleMessageCount, setVisibleMessageCount] = React.useState(20);
-	
 	// Deduplicate and optionally reverse messages
 	// Native: Use inverted FlatList, so reverse array (newest at index 0 = bottom visually)
 	// Web: Normal FlatList, keep chronological order (newest at end = bottom visually)
-	const allMessages = React.useMemo(() => {
+	const messages = React.useMemo(() => {
 		const seen = new Set<string>();
 		const deduplicated = rawMessages.filter((msg: Message) => {
 			const key = msg.id || msg.clientId;
@@ -148,31 +145,25 @@ export default function ChatScreen() {
 		// Reverse on native only (for inverted list)
 		return Platform.OS === 'web' ? deduplicated : [...deduplicated].reverse();
 	}, [rawMessages]);
-	
-	// On web, only show last N messages for performance
-	const messages = React.useMemo(() => {
-		if (Platform.OS === 'web') {
-			// Show last N messages (most recent)
-			return allMessages.slice(-visibleMessageCount);
-		}
-		return allMessages;
-	}, [allMessages, visibleMessageCount]);
 	const { onlineUserIds, onlineCount } = usePresence(conversationId);
 	const { markAsRead } = useReadReceipts(conversationId);
 	const { typingUserIds, startTyping, stopTyping } = useTyping(conversationId, userId || '');
 	
 	// Determine if this is a group chat (3+ participants)
-	const isGroupChat = conversation ? conversation.participants.length >= 3 : false;
+	const isGroupChat = React.useMemo(() => 
+		conversation ? conversation.participants.length >= 3 : false,
+		[conversation]
+	);
 
-	// Helper to get user names from participant list
-	const getUserName = (userId: string): string => {
+	// Helper to get user names from participant list (memoized)
+	const getUserName = React.useCallback((userId: string): string => {
 		if (!conversation) return userId.substring(0, 8);
 		const participant = conversation.participants.find(p => p.userId === userId);
 		return participant?.name || userId.substring(0, 8);
-	};
+	}, [conversation]);
 
-	// Format typing indicator text
-	const getTypingText = (): string => {
+	// Format typing indicator text (memoized)
+	const getTypingText = React.useMemo((): string => {
 		if (typingUserIds.length === 0) return '';
 		if (typingUserIds.length === 1) {
 			return `${getUserName(typingUserIds[0])} is typing...`;
@@ -181,10 +172,10 @@ export default function ChatScreen() {
 			return `${getUserName(typingUserIds[0])} and ${getUserName(typingUserIds[1])} are typing...`;
 		}
 		return `${typingUserIds.length} people are typing...`;
-	};
+	}, [typingUserIds, getUserName]);
 
-	// Format last seen time
-	const formatLastSeen = (lastSeenAt: string | undefined): string => {
+	// Format last seen time (memoized callback)
+	const formatLastSeen = React.useCallback((lastSeenAt: string | undefined): string => {
 		if (!lastSeenAt) return 'Offline';
 		
 		const lastSeen = new Date(lastSeenAt);
@@ -199,7 +190,7 @@ export default function ChatScreen() {
 		if (diffHours < 24) return `Last seen ${diffHours}h ago`;
 		if (diffDays < 7) return `Last seen ${diffDays}d ago`;
 		return `Last seen ${lastSeen.toLocaleDateString()}`;
-	};
+	}, []);
 
 	// Connect to WebSocket when screen mounts
 	useEffect(() => {
@@ -257,40 +248,56 @@ export default function ChatScreen() {
 	// Scroll position management
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
-	// Auto-scroll to bottom on web when messages load
-	React.useEffect(() => {
-		if (Platform.OS === 'web' && messages.length > 0 && !isLoading && flatListRef.current) {
-			// Scroll to bottom after render
-			setTimeout(() => {
-				flatListRef.current?.scrollToEnd({ animated: false });
-			}, 100);
-		}
-	}, [conversationId, isLoading]);
+	// Track if we've scrolled to newest on initial load
+	const hasScrolledToNewestRef = React.useRef<string | null>(null);
 
-	// Reset pagination on conversation change
+	// Auto-scroll to newest messages on conversation change
 	React.useEffect(() => {
-		setVisibleMessageCount(20);
+		// Reset scroll flag when conversation changes
+		hasScrolledToNewestRef.current = null;
 	}, [conversationId]);
 
-	// Track scroll position
+	// Scroll to newest after messages render
+	React.useEffect(() => {
+		if (messages.length > 0 && flatListRef.current && hasScrolledToNewestRef.current !== conversationId) {
+			// Mark as scrolled for this conversation
+			hasScrolledToNewestRef.current = conversationId;
+			
+			// Multiple attempts to ensure scroll works
+			const scrollToNewest = () => {
+				if (Platform.OS === 'web') {
+					flatListRef.current?.scrollToEnd({ animated: false });
+				} else {
+					flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+				}
+			};
+			
+			// Immediate attempt
+			requestAnimationFrame(() => scrollToNewest());
+			// After first render
+			setTimeout(scrollToNewest, 50);
+			setTimeout(scrollToNewest, 150);
+			// Final attempt for web
+			setTimeout(scrollToNewest, 400);
+		}
+	}, [messages, conversationId]);
+
+
+	// Track scroll position for scroll-to-bottom button
 	const handleScroll = (event: any) => {
 		const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
 		
 		if (Platform.OS === 'web') {
-			// Load more messages when scrolling near top
-			if (contentOffset.y < 100 && visibleMessageCount < allMessages.length) {
-				setVisibleMessageCount(prev => Math.min(prev + 20, allMessages.length));
-			}
-			
-			// Show scroll-to-bottom button if not at bottom
+			// Web (not inverted): Show button if not at bottom
 			const isAtBottom = contentOffset.y + layoutMeasurement.height >= contentSize.height - 50;
 			setShowScrollToBottom(!isAtBottom && messages.length > 5);
 		} else {
-			// Native (inverted list)
+			// Native (inverted): Show button if scrolled up from top
 			const scrolledUp = contentOffset.y > 100;
 			setShowScrollToBottom(scrolledUp && messages.length > 5);
 		}
 	};
+
 
 	const pickImage = async () => {
 		try {
@@ -824,8 +831,8 @@ export default function ChatScreen() {
 		);
 	};
 
-	// Get conversation name for header
-	const getHeaderTitle = () => {
+	// Get conversation name for header (memoized)
+	const headerTitle = React.useMemo(() => {
 		if (!conversation) return 'Chat';
 		
 		if (isGroupChat && conversation.name) {
@@ -843,17 +850,25 @@ export default function ChatScreen() {
 		}
 		
 		return 'Chat';
-	};
+	}, [conversation, isGroupChat, userId]);
+
+	// Memoized FlatList renderItem
+	const renderMessage = React.useCallback(({ item }: { item: Message }) => (
+		<MessageBubble 
+			message={item} 
+			isGroupChat={isGroupChat}
+		/>
+	), [isGroupChat]);
 
 	return (
 		<>
 			<Stack.Screen 
 				options={{
-					title: getHeaderTitle(),
+					title: headerTitle,
 					headerTitle: () => (
 						<TouchableOpacity onPress={handleHeaderTap} activeOpacity={0.7}>
 							<Text style={{ fontSize: 17, fontWeight: '600' }}>
-								{getHeaderTitle()}
+								{headerTitle}
 							</Text>
 						</TouchableOpacity>
 					),
@@ -911,7 +926,7 @@ export default function ChatScreen() {
 							</Text>
 						</View>
 						
-					{/* Test Buttons */}
+					{/* Test Buttons Row 1 */}
 					<View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
 						<TouchableOpacity
 							onPress={sendRapidMessages}
@@ -919,12 +934,12 @@ export default function ChatScreen() {
 							style={{
 								flex: 1,
 								backgroundColor: isSending ? '#ccc' : '#007AFF',
-								padding: 12,
+								padding: 10,
 								borderRadius: 8,
 								alignItems: 'center',
 							}}
 						>
-							<Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+							<Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
 								Send 20 Rapid
 							</Text>
 						</TouchableOpacity>
@@ -935,15 +950,34 @@ export default function ChatScreen() {
 							style={{
 								flex: 1,
 								backgroundColor: isGeneratingTestData ? '#ccc' : '#FF9500',
-								padding: 12,
+								padding: 10,
 								borderRadius: 8,
 								alignItems: 'center',
 							}}
 						>
-							<Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+							<Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
 								{isGeneratingTestData ? 'Sending...' : 'Send 100'}
 							</Text>
 						</TouchableOpacity>
+					</View>
+					
+					{/* Performance Info */}
+					<View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 6, marginBottom: 8 }}>
+						<Text style={{ fontSize: 11, fontWeight: '600', color: '#333', marginBottom: 4 }}>
+							📊 Performance Optimizations
+						</Text>
+						<Text style={{ fontSize: 10, color: '#666', fontFamily: 'monospace' }}>
+							• Messages: {messages.length}
+						</Text>
+						<Text style={{ fontSize: 10, color: '#666', fontFamily: 'monospace' }}>
+							• windowSize: 10, initialRender: 20
+						</Text>
+						<Text style={{ fontSize: 10, color: '#666', fontFamily: 'monospace' }}>
+							• Cache: 30s stale-while-revalidate
+						</Text>
+						<Text style={{ fontSize: 10, color: '#666', fontFamily: 'monospace' }}>
+							• Memoized components & callbacks
+						</Text>
 					</View>
 					
 					{/* Clear & Reload Button */}
@@ -1175,38 +1209,30 @@ export default function ChatScreen() {
 							<ActivityIndicator size="large" color="#0084ff" />
 						</View>
 					) : (
-								<FlatList
-									ref={flatListRef}
-									data={messages}
-									inverted={Platform.OS !== 'web'}
-									keyExtractor={(item, index) => item.id || item.clientId || `msg_${index}`}
-							renderItem={({ item }) => (
-								<MessageBubble 
-									message={item} 
-									isGroupChat={isGroupChat}
-								/>
-							)}
-							contentContainerStyle={messages.length === 0 ? styles.emptyMessageList : styles.messageList}
-							onRefresh={refetch}
-							refreshing={isLoading}
-							onScroll={handleScroll}
-							scrollEventThrottle={16}
-							ListHeaderComponent={
-								Platform.OS === 'web' && visibleMessageCount < allMessages.length ? (
-									<View style={{ padding: 10, alignItems: 'center' }}>
-										<Text style={{ color: '#666', fontSize: 12 }}>
-											Scroll up to load {allMessages.length - visibleMessageCount} older messages
-										</Text>
-									</View>
-								) : null
-							}
-							ListEmptyComponent={
-								<View style={styles.emptyState}>
-									<Text style={styles.emptyText}>No messages yet</Text>
-									<Text style={styles.emptySubtext}>Start the conversation!</Text>
-								</View>
-							}
-						/>
+					<FlatList
+						ref={flatListRef}
+						data={messages}
+						inverted={Platform.OS !== 'web'}
+						keyExtractor={(item, index) => item.id || item.clientId || `msg_${index}`}
+						renderItem={renderMessage}
+						contentContainerStyle={messages.length === 0 ? styles.emptyMessageList : styles.messageList}
+						onRefresh={refetch}
+						refreshing={isLoading}
+						onScroll={handleScroll}
+						scrollEventThrottle={16}
+						// Performance optimizations
+						windowSize={10}
+						maxToRenderPerBatch={10}
+						initialNumToRender={20}
+						removeClippedSubviews={Platform.OS !== 'web'}
+						updateCellsBatchingPeriod={50}
+						ListEmptyComponent={
+							<View style={styles.emptyState}>
+								<Text style={styles.emptyText}>No messages yet</Text>
+								<Text style={styles.emptySubtext}>Start the conversation!</Text>
+							</View>
+						}
+					/>
 					)}
 
 			{/* Scroll to Bottom Button */}
@@ -1215,10 +1241,8 @@ export default function ChatScreen() {
 					style={styles.scrollToBottomButton}
 					onPress={() => {
 						if (Platform.OS === 'web') {
-							// On web, scroll to end (bottom)
 							flatListRef.current?.scrollToEnd({ animated: true });
 						} else {
-							// On native inverted list, scrollToOffset(0) goes to newest messages
 							flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
 						}
 					}}
@@ -1230,7 +1254,7 @@ export default function ChatScreen() {
 			{/* Typing Indicator */}
 			{typingUserIds.length > 0 && (
 				<View style={styles.typingIndicatorContainer}>
-					<Text style={styles.typingIndicatorText}>{getTypingText()}</Text>
+					<Text style={styles.typingIndicatorText}>{getTypingText}</Text>
 				</View>
 			)}
 
