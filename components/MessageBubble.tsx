@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { Message, User } from '../lib/api/types';
 import { useAuthStore } from '../lib/stores/auth';
@@ -16,6 +16,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 	const { userId } = useAuthStore();
 	const isOwnMessage = message.senderId === userId;
 	const [senderName, setSenderName] = useState<string | null>(null);
+	const [showLightbox, setShowLightbox] = useState(false);
 
 	// Fetch sender info for group chats
 	useEffect(() => {
@@ -76,14 +77,34 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 				
 				<View style={[
 					styles.bubble,
-					isOwnMessage ? styles.ownBubble : styles.otherBubble
+					isOwnMessage ? styles.ownBubble : styles.otherBubble,
+					message.type === 'image' && styles.imageBubble
 				]}>
-					<Text style={[
-						styles.messageText,
-						isOwnMessage ? styles.ownText : styles.otherText
-					]}>
-						{message.content}
-					</Text>
+					{message.type === 'image' && message.mediaUrl ? (
+						<TouchableOpacity onPress={() => setShowLightbox(true)}>
+							<Image 
+								source={{ uri: message.mediaUrl }} 
+								style={styles.messageImage}
+								resizeMode="cover"
+							/>
+							{message.content && message.content !== '📷 Image' && (
+								<Text style={[
+									styles.messageText,
+									isOwnMessage ? styles.ownText : styles.otherText,
+									styles.captionText
+								]}>
+									{message.content}
+								</Text>
+							)}
+						</TouchableOpacity>
+					) : (
+						<Text style={[
+							styles.messageText,
+							isOwnMessage ? styles.ownText : styles.otherText
+						]}>
+							{message.content}
+						</Text>
+					)}
 					<View style={styles.footer}>
 						<Text style={[
 							styles.timestamp,
@@ -99,6 +120,28 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 					</View>
 				</View>
 			</View>
+
+		{/* Lightbox Modal */}
+		{message.type === 'image' && message.mediaUrl && (
+			<Modal
+				visible={showLightbox}
+				transparent
+				animationType="fade"
+				onRequestClose={() => setShowLightbox(false)}
+			>
+				<TouchableOpacity 
+					style={styles.lightboxContainer}
+					activeOpacity={1}
+					onPress={() => setShowLightbox(false)}
+				>
+					<Image 
+						source={{ uri: message.mediaUrl }} 
+						style={styles.lightboxImage}
+						resizeMode="contain"
+					/>
+				</TouchableOpacity>
+			</Modal>
+		)}
 		</View>
 	);
 });
@@ -164,6 +207,28 @@ const styles = StyleSheet.create({
 	status: {
 		fontSize: 11,
 		fontWeight: '600',
+	},
+	imageBubble: {
+		padding: 4,
+	},
+	messageImage: {
+		width: 200,
+		height: 200,
+		borderRadius: 12,
+	},
+	captionText: {
+		marginTop: 8,
+		marginHorizontal: 8,
+	},
+	lightboxContainer: {
+		flex: 1,
+		backgroundColor: 'rgba(0,0,0,0.9)',
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
+	lightboxImage: {
+		width: Dimensions.get('window').width,
+		height: Dimensions.get('window').height,
 	},
 });
 

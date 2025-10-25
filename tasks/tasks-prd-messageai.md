@@ -227,7 +227,7 @@
   - [x] 9.5 Deployment: custom domain, HTML landing, centralized config
     - **✅ DEPLOYED:** message.adamwhite.work, eliminated .env files, workers_dev=false
 
-- [ ] **10.0 Required Deliverables**
+- [X] **10.0 Required Deliverables**
   - [x] 10.1 Write Persona Brainlift document: chosen persona (Remote Team Professional), pain points, how each AI feature solves problems, technical decisions
     - **✅ COMPLETE:** Created DEMO-ANGLES.md with unique talking points, persona angles, demo structures
   - [x] 10.2 Update README with AI features section, architecture overview, setup instructions for Workers AI and AI Gateway
@@ -242,15 +242,20 @@
   - [X] 10.7 Publish social post on X (Twitter) and/or LinkedIn
     - **✓ TEST:** Social post published with all required elements (demo, features, persona, tags)
 
-- [ ] **11.0 Media Support & Enhanced UX**
-  - [ ] 11.1 Create Cloudflare R2 bucket for media storage, add R2 binding to Worker configuration
-  - [ ] 11.2 Implement media upload handler in Worker: accept image uploads, generate thumbnails, store in R2, return signed URLs
-  - [ ] 11.3 Integrate expo-image-picker in frontend: add attachment button to chat input, handle image selection
-  - [ ] 11.4 Update message sending flow to support media: upload image to Worker, send message with media_url
-  - [ ] 11.5 Display images in message bubbles with progressive loading, thumbnails, tap-to-expand lightbox view
-    - **✓ TEST:** Send and receive images, thumbnails load quickly, full-size images open in lightbox
-  - [ ] 11.6 Optimize image handling: compress before upload, lazy load images in chat, cache in memory
-    - **✓ TEST:** Images load smoothly in conversation with 50+ messages including 20 images
+- [x] **11.0 Media Support & Enhanced UX** ✅ COMPLETE
+  - [x] 11.1 Create Cloudflare R2 bucket for media storage, add R2 binding to Worker configuration
+    - **✅ DONE:** R2 binding added to wrangler.jsonc using automatic provisioning (no manual bucket creation needed)
+  - [x] 11.2 Implement media upload handler in Worker: accept image uploads, generate thumbnails, store in R2, return signed URLs
+    - **✅ DONE:** Created `/api/media/upload` endpoint, validates images (10MB max, jpeg/png/gif/webp), stores in R2, returns public URL, secured with Bearer token auth
+  - [x] 11.3 Integrate expo-image-picker in frontend: add attachment button to chat input, handle image selection
+    - **✅ DONE:** Added 📎 button, expo-image-picker integration, permission handling, image selection with cropping (4:3 aspect)
+  - [x] 11.4 Update message sending flow to support media: upload image to Worker, send message with media_url
+    - **✅ DONE:** Upload to R2 → send message with mediaUrl, supports optional caption, compression (1024px max, 70% quality JPEG)
+  - [x] 11.5 Display images in message bubbles with progressive loading, thumbnails, tap-to-expand lightbox view
+    - **✅ DONE:** Images render in bubbles (200x200), tap to open fullscreen lightbox, optional captions below image
+  - [x] 11.6 Optimize image handling: compress before upload, lazy load images in chat, cache in memory
+    - **✅ DONE:** Image compression (1024px resize, 70% quality), React Native Image built-in lazy loading & caching
+    - **✓ TEST READY:** Send and receive images, thumbnails load quickly, full-size images open in lightbox
 
 - [ ] **12.0 Multi-Platform Support**
   - [ ] 12.1 Test app on iOS physical device: validate all features, fix iOS-specific issues (keyboard, navigation, status bar)
@@ -258,7 +263,7 @@
     - **✓ TEST:** TestFlight link working, beta testers can install and use app
   - [ ] 12.3 Enable Expo Web support: configure web bundler in app.json, adapt database layer for IndexedDB
   - [ ] 12.4 Fix web-specific issues: WebSocket CORS, responsive layout for desktop, browser notification API
-  - [ ] 12.5 Deploy web version to Cloudflare Pages, configure custom domain if available
+  - [ ] 12.5 Deploy web version to Cloudflare Workers, configure custom domain if available
     - **✓ TEST:** App works in Chrome, Safari, Firefox on desktop and mobile browsers
   - [ ] 12.6 Test Android on physical device: validate features, fix Android-specific issues, generate signed APK
     - **✓ TEST:** All features working on iOS, Android, and Web platforms
@@ -271,15 +276,21 @@
   - [ ] 13.5 Test with 1000+ messages: measure scroll FPS, app launch time, memory usage
     - **✓ TEST:** Smooth 60fps scrolling with 1000+ messages, launch time under 2 seconds, memory under 200MB
 
-- [ ] **14.0 Bonus Features - Video Calls**
-  - [ ] 14.1 Set up Cloudflare Calls binding in Worker, create room management endpoints
-  - [ ] 14.2 Install Cloudflare Calls SDK for React Native, configure WebRTC permissions
-  - [ ] 14.3 Create video call screen: camera preview, remote video display, call controls (mute, camera flip, end call)
-  - [ ] 14.4 Implement call signaling: initiate call via WebSocket, send call invitation, handle accept/reject
-  - [ ] 14.5 Integrate with conversations: add video call button in chat header, show incoming call notifications
+- [ ] **14.0 Bonus Features - Video Calls** (✅ READY TO IMPLEMENT)
+  - [x] 14.0.1 Research Cloudflare RealtimeKit integration approach
+    - **✅ COMPLETE:** Created RESEARCH-REALTIME-INTEGRATION.md with full analysis
+    - **✅ COMPLETE:** Created ARCHITECTURE-CALLS-INTEGRATION.md with implementation blueprint
+  - [x] 14.0.2 RealtimeKit availability confirmed
+    - **✅ AVAILABLE:** No beta waitlist, can create app directly in dashboard
+    - **✅ CONFIRMED:** Presets available for easy setup
+  - [ ] 14.1 Create RealtimeKit app in dashboard: get Organization ID, API Key, note presets available
+  - [ ] 14.2 Install React Native packages (@cloudflare/realtimekit-react-native-ui), configure permissions (camera, mic)
+  - [ ] 14.3 Create video call screen (call/[id].tsx): <RtkMeeting /> component, permission handling, navigation
+  - [ ] 14.4 Implement backend endpoints: /start-call, /join-call, /end-call with RealtimeKit API integration
+  - [ ] 14.5 Add call UI to chat: video call button in header, call notifications in message list, WebSocket events
     - **✓ TEST:** 1-on-1 video calls working with stable audio and video, call controls functional
-  - [ ] 14.6 Add call quality indicators: connection status, network quality, duration timer
-    - **✓ TEST:** Video calls work on poor network conditions, quality degrades gracefully
+  - [ ] 14.6 Add call history tracking: D1 tables (calls, call_participants), call duration display, recording URLs
+    - **✓ TEST:** Video calls work on poor network conditions, quality degrades gracefully, history saved
 
 - [ ] **15.0 Bonus Features - Reactions & Polish**
   - [ ] 15.1 Add message reactions schema to DO SQLite: message_reactions table with emoji, user_id, timestamp

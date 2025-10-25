@@ -69,5 +69,15 @@
 			"binding": "VECTORIZE",
 			"index_name": "messageai-embeddings"
 		}
+	],
+	/**
+	 * R2 Bucket for Media Storage
+	 * https://developers.cloudflare.com/r2/
+	 * Using automatic provisioning (Wrangler 4.45+)
+	 */
+	"r2_buckets": [
+		{
+			"binding": "MEDIA_BUCKET"
+		}
 	]
 }

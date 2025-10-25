@@ -12,19 +12,23 @@
 - **@tanstack/react-query** - Latest v5 (server state)
 - **zustand** - Latest v5 (app state)
 - **@clerk/clerk-expo** - ^2.17.0 (authentication)
-- **expo-notifications** - (to be installed in Phase 4.0)
+- **expo-notifications** - Foreground notifications
+- **expo-image-picker** - Image selection from library
+- **expo-image-manipulator** - Image compression and resizing
 - **Native WebSocket** - Built-in (real-time connection)
 
 ### Backend (Cloudflare)
 - **Cloudflare Workers** - Entry point, API routing
-- **Wrangler** - ^4.43.0 (deployment CLI)
+- **Wrangler** - ^4.45.0 (deployment CLI with auto-provisioning)
 - **TypeScript** - ^5.9.2
 - **Durable Objects** - Conversation rooms (one DO per conversation)
   - WebSocket connections with hibernation
   - SQLite storage for messages
   - Presence tracking
 - **D1** - User profiles, conversation metadata
-- **R2** - Media storage (post-MVP)
+- **R2** - Media storage (auto-provisioned: `messageai-worker-media-bucket`)
+- **Workers AI** - Llama 3.1 8B Fast, embeddings (bge-base-en-v1.5)
+- **Vectorize** - Semantic search index (messageai-embeddings, 768D)
 - **Clerk** - Authentication provider
 - **Workers RPC** - Worker ↔ Durable Object communication
 

@@ -17,6 +17,7 @@ import {
 	handleDeletePushToken 
 } from './handlers/push-tokens';
 import { handleAiChat } from './handlers/ai';
+import { handleMediaUpload, handleMediaGet } from './handlers/media';
 
 export { Conversation };
 
@@ -191,6 +192,20 @@ export default {
 		// Clerk webhook endpoint
 		if (url.pathname === '/webhooks/clerk' && request.method === 'POST') {
 			return handleClerkWebhook(request, env);
+		}
+
+		// Media upload endpoint
+		if (url.pathname === '/api/media/upload' && request.method === 'POST') {
+			const response = await handleMediaUpload(request, env);
+			return addCorsHeaders(response);
+		}
+
+		// Media retrieval endpoint
+		if (url.pathname.startsWith('/media/')) {
+			const filename = url.pathname.substring('/media/'.length);
+			if (filename) {
+				return handleMediaGet(filename, env);
+			}
 		}
 
 		// Conversation API endpoints

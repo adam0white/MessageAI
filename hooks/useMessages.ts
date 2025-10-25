@@ -63,7 +63,7 @@ export function useMessages(conversationId: string) {
 
 	// Mutation for sending messages with optimistic updates
 	const sendMessageMutation = useMutation({
-		mutationFn: async ({ content, type = 'text' }: { content: string; type?: 'text' | 'image' | 'file' }) => {
+		mutationFn: async ({ content, type = 'text', mediaUrl }: { content: string; type?: 'text' | 'image' | 'file'; mediaUrl?: string }) => {
 			if (!userId) {
 				throw new Error('User not authenticated');
 			}
@@ -82,12 +82,13 @@ export function useMessages(conversationId: string) {
 				updatedAt: now,
 				clientId,
 				localOnly: true,
+				mediaUrl,
 			};
 
 			await insertMessage(db, optimisticMessage);
 			return { optimisticMessage, clientId };
 		},
-		onMutate: async ({ content, type }) => {
+		onMutate: async ({ content, type, mediaUrl }) => {
 			await queryClient.cancelQueries({ queryKey: ['messages', conversationId] });
 			const previousMessages = queryClient.getQueryData<Message[]>(['messages', conversationId]);
 
@@ -106,6 +107,7 @@ export function useMessages(conversationId: string) {
 					updatedAt: now,
 					clientId,
 					localOnly: true,
+					mediaUrl,
 				};
 
 				return [...old, newMessage];

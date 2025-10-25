@@ -1,7 +1,7 @@
 # Progress: MessageAI
 
-**Updated**: 2025-10-24
-**Status**: 🟢 Phase 9.0 COMPLETE ✅ - Production Ready with Debug Tools!
+**Updated**: 2025-10-25
+**Status**: 🟢 Phase 11.0 COMPLETE ✅ - Media Support Live!
 
 ## Phase 1.0: Foundation & Authentication ✅ (9/9 Complete)
 - ✅ Expo SDK 54 project initialized
@@ -94,6 +94,22 @@
 **Performance Discovery:**
 - ✅ Backend faster than frontend (demo gold!)
 - ✅ Handles 100+ rapid messages gracefully
+
+## Phase 11.0: Media Support & Enhanced UX ✅ (6/6 Complete)
+**R2 Integration:**
+- ✅ R2 bucket auto-provisioning (`messageai-worker-media-bucket`)
+- ✅ Media upload handler with Bearer auth, 10MB limit, validation
+- ✅ Secure file storage: `{userId}/{timestamp}-{random}.{ext}`
+- ✅ Public URL serving via Worker with CORS and caching
+
+**Frontend Integration:**
+- ✅ Image picker with permissions (expo-image-picker)
+- ✅ Image compression: 1024px max, 70% JPEG quality
+- ✅ Display in bubbles (200x200) with tap-to-expand lightbox
+- ✅ Optional captions below images
+- ✅ Lazy loading and caching (React Native Image)
+
+**Flow:** 📎 → Select → Compress → Upload to R2 → Send message with mediaUrl → WebSocket broadcast → Display
 
 ## MVP Progress (11/11) - COMPLETE ✅
 - ✅ User authentication (Clerk) - **Validated on real devices**

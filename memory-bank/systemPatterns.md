@@ -346,6 +346,37 @@ Simple JSON messages over WebSocket:
 - UI shows relevance as percentage (score * 100)
 - Clickable results to jump to message
 
+### Media Upload Pattern (Implemented ✅ - Phase 11.0)
+
+**Upload Flow:**
+1. User taps 📎 attachment button in chat
+2. Image picker with permissions check (photo library access)
+3. Image selection with cropping (4:3 aspect ratio)
+4. Compression: Resize to 1024px max width, 70% JPEG quality
+5. Upload to `/api/media/upload` with Bearer token (Clerk)
+6. R2 storage: `{userId}/{timestamp}-{random}.{ext}` with metadata
+7. Send message with `mediaUrl` field via WebSocket
+8. Message broadcast to all participants with media URL
+
+**Display Flow:**
+1. Message received with `type: 'image'` and `mediaUrl`
+2. Image renders in bubble (200x200px thumbnail)
+3. Optional caption below image
+4. Tap to open fullscreen lightbox modal
+5. React Native Image handles lazy loading and caching
+
+**Security:**
+- Upload requires Clerk Bearer token authentication
+- File validation: Type (jpeg/png/gif/webp), size (10MB max)
+- Files organized by userId in R2 for isolation
+- Media served via Worker with CORS and 1-year cache headers
+
+**R2 Storage:**
+- Bucket: `messageai-worker-media-bucket` (auto-provisioned)
+- Path pattern: `{userId}/{timestamp}-{random}.{ext}`
+- Metadata: userId, originalName, uploadedAt
+- Public access via Worker endpoint: `/media/{filename}`
+
 ### AI Feature UI Pattern (Unified Panel)
 - **6 Feature Buttons**: Ask, Summary, Actions, Priority, Decisions, Search
 - **Active State**: Blue background on selected feature

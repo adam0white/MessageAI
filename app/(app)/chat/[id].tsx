@@ -11,10 +11,14 @@ import {
 	ActivityIndicator,
 	Keyboard,
 	Modal,
-	Alert
+	Alert,
+	Image
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
+import { useAuth } from '@clerk/clerk-expo';
 import { MessageBubble } from '../../../components/MessageBubble';
 import { useMessages } from '../../../hooks/useMessages';
 import type { Message } from '../../../lib/api/types';
@@ -83,6 +87,7 @@ export default function ChatScreen() {
 	const conversationId = id!;
 	
 	const { userId } = useAuthStore();
+	const { getToken } = useAuth();
 	const { wsStatus } = useNetworkStore();
 	const db = useSQLiteContext();
 	
@@ -93,6 +98,8 @@ export default function ChatScreen() {
 	const [isAskingAi, setIsAskingAi] = useState(false);
 	const [isEmbedding, setIsEmbedding] = useState(false);
 	const [isProcessing, setIsProcessing] = useState(false);
+	const [selectedImage, setSelectedImage] = useState<string | null>(null);
+	const [isUploadingImage, setIsUploadingImage] = useState(false);
 	
 	// Result states
 	const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null);
@@ -247,6 +254,97 @@ export default function ChatScreen() {
 	};
 	
 	// No auto-scroll needed! Inverted list with reversed data naturally shows newest messages
+
+	const pickImage = async () => {
+		try {
+			const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+			if (status !== 'granted') {
+				Alert.alert('Permission needed', 'Please allow access to your photo library');
+				return;
+			}
+
+			const result = await ImagePicker.launchImageLibraryAsync({
+				mediaTypes: ['images'],
+				allowsEditing: true,
+				aspect: [4, 3],
+				quality: 0.8,
+			});
+
+			if (!result.canceled && result.assets[0]) {
+				const imageUri = result.assets[0].uri;
+				
+				// Compress image
+				const compressed = await manipulateAsync(
+					imageUri,
+					[{ resize: { width: 1024 } }],
+					{ compress: 0.7, format: SaveFormat.JPEG }
+				);
+				
+				setSelectedImage(compressed.uri);
+				await uploadAndSendImage(compressed.uri);
+			}
+		} catch (error) {
+			console.error('Image picker error:', error);
+			Alert.alert('Error', 'Failed to pick image');
+		}
+	};
+
+	const uploadAndSendImage = async (imageUri: string) => {
+		if (!userId) return;
+		
+		setIsUploadingImage(true);
+		try {
+			// Create form data
+			const formData = new FormData();
+			const filename = imageUri.split('/').pop() || 'image.jpg';
+			
+			formData.append('file', {
+				uri: imageUri,
+				type: 'image/jpeg',
+				name: filename,
+			} as any);
+			formData.append('userId', userId);
+
+			// Get Clerk token
+			const token = await getToken();
+
+			// Upload to backend
+			const response = await fetch(`${WORKER_URL}/api/media/upload`, {
+				method: 'POST',
+				headers: {
+					'Authorization': `Bearer ${token}`,
+				},
+				body: formData,
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				console.error('Upload failed:', response.status, errorText);
+				throw new Error(`Upload failed: ${response.status} - ${errorText}`);
+			}
+
+			const result = await response.json();
+
+			if (result.success) {
+				// Send message with media URL
+				sendMessage({ 
+					content: inputText.trim() || '📷 Image', 
+					type: 'image',
+					mediaUrl: result.url 
+				});
+				setInputText('');
+				setSelectedImage(null);
+			} else {
+				throw new Error(result.error || 'Upload failed');
+			}
+		} catch (error) {
+			console.error('Image upload error:', error);
+			Alert.alert('Upload Failed', 'Could not upload image. Please try again.');
+			setSelectedImage(null);
+		} finally {
+			setIsUploadingImage(false);
+		}
+	};
 
 	const handleSend = () => {
 		const trimmedText = inputText.trim();
@@ -1077,40 +1175,60 @@ export default function ChatScreen() {
 				</View>
 			)}
 
+			{selectedImage && (
+				<View style={styles.imagePreview}>
+					<Image source={{ uri: selectedImage }} style={styles.previewImage} />
+					{isUploadingImage && (
+						<View style={styles.uploadingOverlay}>
+							<ActivityIndicator size="large" color="#007AFF" />
+						</View>
+					)}
+				</View>
+			)}
+
 			<View style={styles.inputContainer}>
-					<TextInput
-						style={styles.input}
-						value={inputText}
-						onChangeText={(text) => {
-							setInputText(text);
-							if (text.trim()) {
-								startTyping();
-							} else {
-								stopTyping();
-							}
-						}}
-						onBlur={stopTyping}
-						placeholder="Type a message..."
-						placeholderTextColor="#999"
-						multiline
-						maxLength={1000}
-						editable={!isSending}
-					/>
-						<TouchableOpacity 
-							style={[
-								styles.sendButton,
-								(!inputText.trim() || isSending) && styles.sendButtonDisabled
-							]}
-							onPress={handleSend}
-							disabled={!inputText.trim() || isSending}
-						>
-							{isSending ? (
-								<ActivityIndicator size="small" color="#fff" />
-							) : (
-								<Text style={styles.sendButtonText}>Send</Text>
-							)}
-						</TouchableOpacity>
-					</View>
+				<TouchableOpacity 
+					style={styles.attachButton}
+					onPress={pickImage}
+					disabled={isUploadingImage || isSending}
+				>
+					<Text style={styles.attachButtonText}>📎</Text>
+				</TouchableOpacity>
+				
+				<TextInput
+					style={styles.input}
+					value={inputText}
+					onChangeText={(text) => {
+						setInputText(text);
+						if (text.trim()) {
+							startTyping();
+						} else {
+							stopTyping();
+						}
+					}}
+					onBlur={stopTyping}
+					placeholder="Type a message..."
+					placeholderTextColor="#999"
+					multiline
+					maxLength={1000}
+					editable={!isSending && !isUploadingImage}
+				/>
+				
+				<TouchableOpacity 
+					style={[
+						styles.sendButton,
+						(!inputText.trim() || isSending || isUploadingImage) && styles.sendButtonDisabled
+					]}
+					onPress={handleSend}
+					disabled={!inputText.trim() || isSending || isUploadingImage}
+				>
+					{isSending ? (
+						<ActivityIndicator size="small" color="#fff" />
+					) : (
+						<Text style={styles.sendButtonText}>Send</Text>
+					)}
+				</TouchableOpacity>
+			</View>
 
 				{/* Member List Modal */}
 				<Modal
@@ -1466,6 +1584,33 @@ const styles = StyleSheet.create({
 		color: '#fff',
 		fontSize: 16,
 		fontWeight: '600',
+	},
+	attachButton: {
+		padding: 10,
+		marginRight: 8,
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
+	attachButtonText: {
+		fontSize: 24,
+	},
+	imagePreview: {
+		padding: 12,
+		backgroundColor: '#fff',
+		borderTopWidth: 1,
+		borderTopColor: '#e4e6eb',
+	},
+	previewImage: {
+		width: 200,
+		height: 200,
+		borderRadius: 12,
+	},
+	uploadingOverlay: {
+		...StyleSheet.absoluteFillObject,
+		backgroundColor: 'rgba(0,0,0,0.3)',
+		justifyContent: 'center',
+		alignItems: 'center',
+		borderRadius: 12,
 	},
 	statusBanner: {
 		backgroundColor: '#ffc107',
