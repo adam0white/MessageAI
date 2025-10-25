@@ -25,11 +25,18 @@ cd worker && npm install && cd ..
 # - Edit worker/wrangler.jsonc (D1 database ID)
 # - Run D1 migrations
 
-npm start              # Frontend (Expo)
+# Run on different platforms
+npm start              # Mobile (iOS/Android via Expo Go)
+npm run web            # Web (localhost:8081)
 cd worker && npm run deploy  # Backend (Cloudflare)
 ```
 
-See [SETUP-QUICK.md](./SETUP-QUICK.md) for complete setup guide.
+**Multi-Platform Support:**
+- ✅ **iOS** - Physical devices (7-day certificate) or TestFlight
+- ✅ **Android** - APK or Google Play
+- ✅ **Web** - Chrome, Firefox, Safari (desktop & mobile)
+
+See [WEB-SUPPORT-GUIDE.md](./WEB-SUPPORT-GUIDE.md) for web-specific setup and deployment.
 
 ## 🤖 AI Features for Remote Teams
 
@@ -112,15 +119,18 @@ messageAI/
 
 ## 🛠️ Tech Stack
 
-**Frontend:** React Native (Expo SDK 54) · React Query v5 · Zustand v5 · Expo SQLite · Clerk · TypeScript 5.9
+**Frontend:** React Native (Expo SDK 54) · React Native Web · React Query v5 · Zustand v5 · Expo SQLite · Clerk · TypeScript 5.9
 
-**Backend:** Cloudflare Workers · Durable Objects · D1 · Workers AI · Vectorize · AI Gateway · TypeScript 5.9
+**Backend:** Cloudflare Workers · Durable Objects · D1 · R2 · Workers AI · Vectorize · AI Gateway · TypeScript 5.9
 
 **AI Models:** Qwen 1.5 14B (chat responses) · Llama 3.1 8B Fast (agent workflow) · bge-base-en-v1.5 (embeddings)
+
+**Platforms:** iOS · Android · Web (desktop & mobile browsers)
 
 ## 📚 Documentation
 
 - **[SETUP-QUICK.md](./SETUP-QUICK.md)** - Fast setup guide (~15 min to deploy)
+- **[WEB-SUPPORT-GUIDE.md](./WEB-SUPPORT-GUIDE.md)** - Web platform setup, testing, and deployment
 - **[DEMO-ANGLES.md](./DEMO-ANGLES.md)** - Interesting talking points for demos
 - **[TECH-TALKING-POINTS.md](./TECH-TALKING-POINTS.md)** - Technical decisions explained
 - **[memory-bank/](./memory-bank/)** - Architecture, patterns, learnings (Memory Bank system)

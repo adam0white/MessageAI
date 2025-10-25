@@ -14,8 +14,7 @@ import {
 	Alert,
 	Image
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import * as PlatformImagePicker from '../../../lib/platform/imagePicker';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useAuth } from '@clerk/clerk-expo';
@@ -132,9 +131,13 @@ export default function ChatScreen() {
 	const { messages: rawMessages, isLoading, sendMessage, isSending, refetch, clearAndReload } = useMessages(conversationId);
 	const { conversation } = useConversation(conversationId);
 	
-	// Deduplicate and reverse messages for inverted FlatList
-	// Inverted list shows index 0 at bottom, so we reverse to show newest first
-	const messages = React.useMemo(() => {
+	// Web pagination: Show only recent messages initially, load more on scroll
+	const [visibleMessageCount, setVisibleMessageCount] = React.useState(20);
+	
+	// Deduplicate and optionally reverse messages
+	// Native: Use inverted FlatList, so reverse array (newest at index 0 = bottom visually)
+	// Web: Normal FlatList, keep chronological order (newest at end = bottom visually)
+	const allMessages = React.useMemo(() => {
 		const seen = new Set<string>();
 		const deduplicated = rawMessages.filter((msg: Message) => {
 			const key = msg.id || msg.clientId;
@@ -142,9 +145,18 @@ export default function ChatScreen() {
 			seen.add(key);
 			return true;
 		});
-		// Reverse so newest message is at index 0 (bottom of inverted list)
-		return [...deduplicated].reverse();
+		// Reverse on native only (for inverted list)
+		return Platform.OS === 'web' ? deduplicated : [...deduplicated].reverse();
 	}, [rawMessages]);
+	
+	// On web, only show last N messages for performance
+	const messages = React.useMemo(() => {
+		if (Platform.OS === 'web') {
+			// Show last N messages (most recent)
+			return allMessages.slice(-visibleMessageCount);
+		}
+		return allMessages;
+	}, [allMessages, visibleMessageCount]);
 	const { onlineUserIds, onlineCount } = usePresence(conversationId);
 	const { markAsRead } = useReadReceipts(conversationId);
 	const { typingUserIds, startTyping, stopTyping } = useTyping(conversationId, userId || '');
@@ -245,43 +257,68 @@ export default function ChatScreen() {
 	// Scroll position management
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
-	// With inverted list, track if user scrolled UP (away from newest messages at bottom of screen)
+	// Auto-scroll to bottom on web when messages load
+	React.useEffect(() => {
+		if (Platform.OS === 'web' && messages.length > 0 && !isLoading && flatListRef.current) {
+			// Scroll to bottom after render
+			setTimeout(() => {
+				flatListRef.current?.scrollToEnd({ animated: false });
+			}, 100);
+		}
+	}, [conversationId, isLoading]);
+
+	// Reset pagination on conversation change
+	React.useEffect(() => {
+		setVisibleMessageCount(20);
+	}, [conversationId]);
+
+	// Track scroll position
 	const handleScroll = (event: any) => {
-		const offsetY = event.nativeEvent.contentOffset.y;
-		// In inverted list, scrolling up (offsetY increases) means going to older messages
-		const scrolledUp = offsetY > 100;
-		setShowScrollToBottom(scrolledUp && messages.length > 5);
+		const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+		
+		if (Platform.OS === 'web') {
+			// Load more messages when scrolling near top
+			if (contentOffset.y < 100 && visibleMessageCount < allMessages.length) {
+				setVisibleMessageCount(prev => Math.min(prev + 20, allMessages.length));
+			}
+			
+			// Show scroll-to-bottom button if not at bottom
+			const isAtBottom = contentOffset.y + layoutMeasurement.height >= contentSize.height - 50;
+			setShowScrollToBottom(!isAtBottom && messages.length > 5);
+		} else {
+			// Native (inverted list)
+			const scrolledUp = contentOffset.y > 100;
+			setShowScrollToBottom(scrolledUp && messages.length > 5);
+		}
 	};
-	
-	// No auto-scroll needed! Inverted list with reversed data naturally shows newest messages
 
 	const pickImage = async () => {
 		try {
-			const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+			const { status } = await PlatformImagePicker.requestMediaLibraryPermissionsAsync();
 			if (status !== 'granted') {
 				Alert.alert('Permission needed', 'Please allow access to your photo library');
 				return;
 			}
 
-			const result = await ImagePicker.launchImageLibraryAsync({
-				mediaTypes: ['images'],
+			const result = await PlatformImagePicker.launchImageLibraryAsync({
+				mediaTypes: PlatformImagePicker.MediaTypeOptions.Images,
 				allowsEditing: true,
 				aspect: [4, 3],
 				quality: 0.8,
 			});
 
-			if (!result.canceled && result.assets[0]) {
+			if (!result.canceled && result.assets?.[0]) {
 				const imageUri = result.assets[0].uri;
 				
 				// Compress image
-				const compressed = await manipulateAsync(
+				const compressed = await PlatformImagePicker.manipulateAsync(
 					imageUri,
 					[{ resize: { width: 1024 } }],
-					{ compress: 0.7, format: SaveFormat.JPEG }
+					{ compress: 0.7, format: 'jpeg' }
 				);
 				
 				setSelectedImage(compressed.uri);
-				await uploadAndSendImage(compressed.uri);
+				await uploadAndSendImage(compressed);
 			}
 		} catch (error) {
 			console.error('Image picker error:', error);
@@ -289,20 +326,28 @@ export default function ChatScreen() {
 		}
 	};
 
-	const uploadAndSendImage = async (imageUri: string) => {
+	const uploadAndSendImage = async (imageData: any) => {
 		if (!userId) return;
 		
 		setIsUploadingImage(true);
 		try {
 			// Create form data
 			const formData = new FormData();
-			const filename = imageUri.split('/').pop() || 'image.jpg';
 			
-			formData.append('file', {
-				uri: imageUri,
-				type: 'image/jpeg',
-				name: filename,
-			} as any);
+			// Handle web (blob) vs native (uri)
+			if (Platform.OS === 'web' && imageData.blob) {
+				// Web: use blob directly
+				formData.append('file', imageData.blob, 'image.jpg');
+			} else {
+				// Native: use uri
+				const imageUri = typeof imageData === 'string' ? imageData : imageData.uri;
+				const filename = imageUri.split('/').pop() || 'image.jpg';
+				formData.append('file', {
+					uri: imageUri,
+					type: 'image/jpeg',
+					name: filename,
+				} as any);
+			}
 			formData.append('userId', userId);
 
 			// Get Clerk token
@@ -1133,7 +1178,7 @@ export default function ChatScreen() {
 								<FlatList
 									ref={flatListRef}
 									data={messages}
-									inverted
+									inverted={Platform.OS !== 'web'}
 									keyExtractor={(item, index) => item.id || item.clientId || `msg_${index}`}
 							renderItem={({ item }) => (
 								<MessageBubble 
@@ -1146,6 +1191,15 @@ export default function ChatScreen() {
 							refreshing={isLoading}
 							onScroll={handleScroll}
 							scrollEventThrottle={16}
+							ListHeaderComponent={
+								Platform.OS === 'web' && visibleMessageCount < allMessages.length ? (
+									<View style={{ padding: 10, alignItems: 'center' }}>
+										<Text style={{ color: '#666', fontSize: 12 }}>
+											Scroll up to load {allMessages.length - visibleMessageCount} older messages
+										</Text>
+									</View>
+								) : null
+							}
 							ListEmptyComponent={
 								<View style={styles.emptyState}>
 									<Text style={styles.emptyText}>No messages yet</Text>
@@ -1160,8 +1214,13 @@ export default function ChatScreen() {
 				<TouchableOpacity
 					style={styles.scrollToBottomButton}
 					onPress={() => {
-						// In inverted list, scrollToOffset(0) goes to newest messages
-						flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+						if (Platform.OS === 'web') {
+							// On web, scroll to end (bottom)
+							flatListRef.current?.scrollToEnd({ animated: true });
+						} else {
+							// On native inverted list, scrollToOffset(0) goes to newest messages
+							flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+						}
 					}}
 				>
 					<Text style={{ fontSize: 20, color: '#fff' }}>↓</Text>

@@ -32,6 +32,7 @@ yarn-error.log*
 worker/node_modules/
 worker/dist/
 worker/.wrangler/
+worker/public/
 
 # Logs
 *.log

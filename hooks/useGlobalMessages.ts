@@ -12,8 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
+import * as PlatformNotifications from '../lib/platform/notifications';
 import { useAuthStore } from '../lib/stores/auth';
 import { useQueryClient } from '@tanstack/react-query';
 import { upsertConversation } from '../lib/db/queries';
@@ -23,10 +22,9 @@ const WORKER_URL = config.workerUrl;
 const POLLING_INTERVAL = 3000; // 3 seconds
 
 // Set notification handler for foreground notifications
-Notifications.setNotificationHandler({
+PlatformNotifications.setNotificationHandler({
 	handleNotification: async () => ({
-		shouldShowBanner: true,
-		shouldShowList: true,
+		shouldShowAlert: true,
 		shouldPlaySound: true,
 		shouldSetBadge: false,
 	}),
@@ -51,27 +49,17 @@ export function useGlobalMessages() {
 		async function requestPermissions() {
 			try {
 				// Setup Android channel first
-				if (Platform.OS === 'android') {
-					await Notifications.setNotificationChannelAsync('default', {
-						name: 'Default',
-						importance: Notifications.AndroidImportance.MAX,
-						vibrationPattern: [0, 250, 250, 250],
-						lightColor: '#0EA5E9',
-						sound: 'default',
-					});
+				await PlatformNotifications.setNotificationChannelAsync({
+					id: 'default',
+					name: 'Default',
+					importance: PlatformNotifications.AndroidImportance.MAX,
+				});
+
+				const { status } = await PlatformNotifications.requestPermissions();
+				
+				if (status === 'granted') {
+					setPermissionsGranted(true);
 				}
-
-				const { status: existingStatus } = await Notifications.getPermissionsAsync();
-				let finalStatus = existingStatus;
-
-			if (existingStatus !== 'granted') {
-				const { status } = await Notifications.requestPermissionsAsync();
-				finalStatus = status;
-			}
-
-			if (finalStatus === 'granted') {
-				setPermissionsGranted(true);
-			}
 			} catch (error) {
 				console.error('Failed to request notification permissions:', error);
 			}
@@ -139,20 +127,16 @@ export function useGlobalMessages() {
 							? `${senderName}: ${messagePreview}`
 							: messagePreview;
 
-						// Show local notification with sender and message content
-						await Notifications.scheduleNotificationAsync({
-							content: {
-								title,
-								body,
-								data: {
-									conversationId: conv.id,
-									messageId: notificationId,
-									type: 'new_message',
-								},
-								sound: 'default',
-							},
-							trigger: null,
-						});
+					// Show local notification with sender and message content
+					await PlatformNotifications.scheduleNotificationAsync({
+						title,
+						body,
+						data: {
+							conversationId: conv.id,
+							messageId: notificationId,
+							type: 'new_message',
+						},
+					});
 
 						notifiedMessageIds.current.add(notificationId);
 					}
@@ -176,7 +160,7 @@ export function useGlobalMessages() {
 
 	// Handle notification taps
 	useEffect(() => {
-		const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+		const subscription = PlatformNotifications.addNotificationResponseReceivedListener(response => {
 			const conversationId = response.notification.request.content.data?.conversationId as string;
 			if (conversationId) {
 				router.push(`/chat/${conversationId}`);

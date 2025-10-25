@@ -1,17 +1,18 @@
 # Active Context: MessageAI
 
 **Last Updated**: 2025-10-25  
-**Phase**: Phase 11.0 COMPLETE ✅ (Media Support & Enhanced UX)
+**Phase**: Phase 12.0 COMPLETE ✅ (Multi-Platform Support - Web)
 
 ## Current Status
 
-**All MVP + AI Features + Media Support Complete:**
+**Full-Stack Multi-Platform AI Messaging App - PRODUCTION READY:**
 - ✅ **Core Messaging**: Real-time chat, group chat, presence, read receipts
 - ✅ **Media Support**: Image upload to R2, compression, lightbox display
 - ✅ **5 AI Analysis Tools**: Thread summaries, action items, priority detection, decisions, smart search
 - ✅ **Multi-Step Agent**: Team event planner with context-aware workflow
-- ✅ **Production Ready**: Deployed at message.adamwhite.work with debug panel
-- ✅ **Performance Tested**: Handles 100+ rapid messages without errors
+- ✅ **Multi-Platform**: iOS (local dev build), Android, Web (Chrome, Safari - desktop & mobile)
+- ✅ **Unified Deployment**: Web frontend + backend both on Workers at message.adamwhite.work
+- ✅ **95%+ Code Sharing**: Platform adapters for storage, notifications, image picker only
 
 ## Critical Test Results (Phase 3 Validated)
 ✅ **WORKING**: Messages appear instantly when both users have chat open
@@ -92,6 +93,24 @@
 33. **No Fake Data**: Use area names ("Downtown") not fake addresses ("123 Main St")
 34. **Extract Real Data**: Find actual times from messages, not hardcoded defaults
 
+### Phase 12 Learnings (Multi-Platform Web Support)
+35. **Platform Adapters Pattern**: Isolate platform-specific code in lib/platform/ with unified API
+36. **Metro WASM Support**: Add wasm to assetExts for expo-sqlite web support (SQL.js)
+37. **Conditional Imports**: Use lazy require() with Platform.OS check to avoid bundling native modules on web
+38. **95%+ Code Sharing**: Only storage, notifications, and image picker need platform adapters
+39. **Web = First-Class Citizen**: Same backend, same features, same UX - just different runtime
+40. **Browser Notifications API**: Works well for foreground, Service Workers needed for background
+41. **localStorage vs SecureStore**: Both async, same API - easy to swap with wrapper
+42. **HTML File Input**: Surprisingly good UX for image picking on web, no complex polyfills needed
+43. **Blob vs Data URL**: For uploads on web, use Blob objects directly in FormData, not data URLs
+44. **FlatList Inverted on Web**: Must disable inverted prop on web - it applies CSS transforms that double-flip
+45. **Firefox OPFS Limitation**: Firefox doesn't support OPFS for SQLite - show warning, recommend Chrome/Safari
+46. **Web Pagination**: Load only last 20 messages initially, infinite scroll up for older messages - eliminates jank
+47. **iOS Free Account**: Use `expo prebuild` + Xcode for local dev builds (7-day cert), EAS requires paid account
+48. **Workers Static Assets > Pages**: Pages SPA fallback breaks WASM serving - use Workers Assets instead
+49. **Unified Deployment**: Web + backend on same Worker at message.adamwhite.work - `npm run web:deploy`
+50. **Workers Assets Binding**: Add `assets: {directory: "./public", binding: "ASSETS"}` to wrangler.jsonc
+
 ## Phase 9 Highlights (Testing & Production Hardening)
 
 **Debug Tools:**
@@ -127,5 +146,6 @@ Backend delivers messages faster than React can process locally - Cloudflare Wor
 3. **DO message persistence**: Old messages persist. Future: Deletion endpoint with `ctx.storage.deleteAll()`
 
 ## Next Steps
-- Phase 12+: Multi-platform testing, performance optimization
-- Optional: Video calls (blocked on RealtimeKit access), reactions, dark mode
+- iOS development build and testing
+- Optional: Video calls, reactions, dark mode
+- Optional: PWA features (Service Workers for offline)

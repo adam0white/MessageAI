@@ -11,11 +11,11 @@
 import { ClerkProvider, ClerkLoaded } from '@clerk/clerk-expo';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Slot } from 'expo-router';
-import * as SecureStore from 'expo-secure-store';
 import { SQLiteProvider } from 'expo-sqlite';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { DB_NAME } from '../lib/db/schema';
 import { config } from '../lib/config';
+import { storage } from '../lib/platform/storage';
 import React from 'react';
 
 // Create a client
@@ -31,27 +31,26 @@ const queryClient = new QueryClient({
 const CLERK_PUBLISHABLE_KEY = config.clerkPublishableKey;
 
 /**
- * Token cache for Clerk using Expo Secure Store
+ * Token cache for Clerk
+ * Uses platform-agnostic storage (SecureStore on native, localStorage on web)
  */
 const tokenCache = {
 	async getToken(key: string) {
-		try {
-			return await SecureStore.getItemAsync(key);
-		} catch (error) {
-			console.error('Error getting token:', error);
-			return null;
-		}
+		return await storage.getItem(key);
 	},
 	async saveToken(key: string, value: string) {
-		try {
-			return await SecureStore.setItemAsync(key, value);
-		} catch (error) {
-			console.error('Error saving token:', error);
-		}
+		await storage.setItem(key, value);
 	},
 };
 
 export default function RootLayout() {
+	// Check browser compatibility on web
+	React.useEffect(() => {
+		if (typeof window !== 'undefined' && navigator.userAgent?.includes('Firefox')) {
+			console.warn('⚠️ Firefox has limited support for IndexedDB/OPFS. Consider using Chrome or Safari for best experience.');
+		}
+	}, []);
+
 	if (!CLERK_PUBLISHABLE_KEY) {
 		return (
 			<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>

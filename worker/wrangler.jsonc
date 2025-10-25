@@ -8,6 +8,10 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2025-10-14",
 	"workers_dev": false,
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS"
+	},
 	"routes": [
 		{
 			"pattern": "message.adamwhite.work",

@@ -46,8 +46,23 @@ export default {
 			return new Response(null, { headers: corsHeaders });
 		}
 
-		// Landing page
-		if (url.pathname === '/') {
+		// API routes - handle before static assets
+		if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws') || url.pathname.startsWith('/webhooks/')) {
+			// Continue to API handlers below...
+		} else if (env.ASSETS) {
+			// Try to serve static assets (web app)
+			try {
+				const asset = await env.ASSETS.fetch(request);
+				if (asset.status < 400) {
+					return asset;
+				}
+			} catch (e) {
+				// Asset not found, continue to fallback
+			}
+		}
+
+		// Landing page fallback (if no static assets)
+		if (url.pathname === '/' && !env.ASSETS) {
 			const html = `
 <!DOCTYPE html>
 <html lang="en">

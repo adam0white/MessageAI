@@ -18,7 +18,8 @@
       "bundleIdentifier": "com.messageai.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -38,6 +39,7 @@
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
+      "expo-dev-client",
       [
         "expo-notifications",
         {
