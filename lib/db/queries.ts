@@ -235,7 +235,7 @@ export async function insertMessage(
 	db: SQLite.SQLiteDatabase,
 	message: Message
 ): Promise<void> {
-	// CRITICAL: Ensure sender exists as user first to prevent foreign key errors
+	// CRITICAL: Ensure sender exists as user first to prevent FK errors
 	const existingUser = await getUserById(db, message.senderId);
 	if (!existingUser) {
 		await db.runAsync(
@@ -245,6 +245,25 @@ export async function insertMessage(
 				message.senderId,
 				message.senderId,
 				`${message.senderId}@placeholder.local`,
+				new Date().toISOString(),
+				new Date().toISOString()
+			]
+		);
+	}
+
+	// CRITICAL: Ensure conversation exists to prevent FK errors
+	const existingConv = await db.getFirstAsync(
+		'SELECT 1 FROM conversations WHERE id = ?',
+		[message.conversationId]
+	);
+	if (!existingConv) {
+		// Create placeholder conversation - will be updated when conversation list refreshes
+		await db.runAsync(
+			`INSERT OR IGNORE INTO conversations (id, type, created_at, updated_at)
+			VALUES (?, ?, ?, ?)`,
+			[
+				message.conversationId,
+				'direct', // Placeholder type
 				new Date().toISOString(),
 				new Date().toISOString()
 			]
