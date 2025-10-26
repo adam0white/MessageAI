@@ -15,7 +15,7 @@ import {
 	Image
 } from 'react-native';
 import * as PlatformImagePicker from '../../../lib/platform/imagePicker';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useAuth } from '@clerk/clerk-expo';
 import { MessageBubble } from '../../../components/MessageBubble';
@@ -84,6 +84,7 @@ interface AgentProgress {
 export default function ChatScreen() {
 	const { id } = useLocalSearchParams<{ id: string }>();
 	const conversationId = id!;
+	const router = useRouter();
 	
 	const { userId } = useAuthStore();
 	const { getToken } = useAuth();
@@ -872,14 +873,70 @@ export default function ChatScreen() {
 							</Text>
 						</TouchableOpacity>
 					),
-					headerRight: () => (
-						<View style={styles.headerRight}>
-							<TouchableOpacity 
-								onPress={() => setShowAiInput(!showAiInput)}
-								style={[styles.aiButton, showAiInput && styles.aiButtonActive, { marginRight: 6 }]}
-							>
-								<Text style={styles.aiButtonText}>🤖 AI</Text>
-							</TouchableOpacity>
+			headerRight: () => (
+				<View style={styles.headerRight}>
+				{Platform.OS !== 'web' && conversation && (
+					<TouchableOpacity 
+						onPress={async () => {
+							try {
+								const token = await getToken();
+								
+								// Create participant list from conversation
+								const participants = conversation.participants.map(p => ({
+									userId: p.userId,
+									userName: p.user?.name || p.user?.email.split('@')[0] || p.userId.substring(0, 8)
+								}));
+								
+								const response = await fetch(`${WORKER_URL}/api/conversations/${conversationId}/start-call`, {
+									method: 'POST',
+									headers: { 
+										'Authorization': `Bearer ${token}`,
+										'Content-Type': 'application/json',
+									},
+									body: JSON.stringify({ 
+										participants,
+										userId 
+									}),
+								});
+								
+								const data = await response.json();
+								console.log('Start call response:', data);
+								
+								if (!response.ok || data.error) {
+									Alert.alert('Call Failed', data.error || 'Failed to start call');
+									return;
+								}
+								
+								if (!data.authToken) {
+									Alert.alert('Call Failed', 'No auth token returned from server');
+									return;
+								}
+								
+								// Send call invitation message to conversation
+								if (data.isNewMeeting) {
+									sendMessage({
+										content: `📹 Started a video call - Tap to join!`,
+										type: 'text'
+									});
+								}
+								
+								router.push({ pathname: '/call/[id]', params: { id: conversationId, authToken: data.authToken } });
+							} catch (error) {
+								console.error('Failed to start call:', error);
+								Alert.alert('Call Failed', error instanceof Error ? error.message : 'Unknown error');
+							}
+						}}
+						style={[styles.aiButton, { marginRight: 6 }]}
+					>
+						<Text style={styles.aiButtonText}>📹</Text>
+					</TouchableOpacity>
+				)}
+						<TouchableOpacity 
+							onPress={() => setShowAiInput(!showAiInput)}
+							style={[styles.aiButton, showAiInput && styles.aiButtonActive, { marginRight: 6 }]}
+						>
+							<Text style={styles.aiButtonText}>🤖 AI</Text>
+						</TouchableOpacity>
 							{wsStatus === 'connected' && onlineCount > 0 && (
 								<TouchableOpacity 
 									style={styles.onlineStatusContainer}

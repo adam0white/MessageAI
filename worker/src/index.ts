@@ -18,6 +18,7 @@ import {
 } from './handlers/push-tokens';
 import { handleAiChat } from './handlers/ai';
 import { handleMediaUpload, handleMediaGet } from './handlers/media';
+import { handleStartCall, handleEndCall } from './handlers/calls';
 
 export { Conversation };
 
@@ -234,15 +235,27 @@ export default {
 			}
 		}
 
-		if (url.pathname.startsWith('/api/conversations/')) {
-			const conversationId = url.pathname.split('/')[3];
-			if (conversationId && request.method === 'GET') {
-				const response = await handleGetConversation(request, env, conversationId);
-				return addCorsHeaders(response);
-			}
+	if (url.pathname.startsWith('/api/conversations/')) {
+		const conversationId = url.pathname.split('/')[3];
+		if (conversationId && request.method === 'GET') {
+			const response = await handleGetConversation(request, env, conversationId);
+			return addCorsHeaders(response);
 		}
+		
+		// Start call endpoint
+		if (conversationId && url.pathname.endsWith('/start-call') && request.method === 'POST') {
+			const response = await handleStartCall(request, env, conversationId);
+			return addCorsHeaders(response);
+		}
+		
+		// End call endpoint
+		if (conversationId && url.pathname.endsWith('/end-call') && request.method === 'POST') {
+			const response = await handleEndCall(request, env, conversationId);
+			return addCorsHeaders(response);
+		}
+	}
 
-		// Push token endpoints
+	// Push token endpoints
 		if (url.pathname === '/api/push-tokens' && request.method === 'POST') {
 			const response = await handleRegisterPushToken(request, env);
 			return addCorsHeaders(response);

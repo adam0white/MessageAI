@@ -1,7 +1,7 @@
 {
   "name": "messageai",
   "version": "1.0.0",
-  "main": "expo-router/entry",
+  "main": "index.ts",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -12,9 +12,14 @@
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.17.0",
+    "@cloudflare/react-native-webrtc": "^125.0.2",
+    "@cloudflare/realtimekit-react-native": "^0.2.1",
+    "@cloudflare/realtimekit-react-native-ui": "^0.1.3",
     "@tanstack/react-query": "^5.90.5",
     "expo": "54.0.20",
     "expo-auth-session": "~7.0.8",
+    "expo-av": "~16.0.7",
+    "expo-camera": "~17.0.8",
     "expo-constants": "~18.0.10",
     "expo-dev-client": "~6.0.16",
     "expo-device": "~8.0.9",

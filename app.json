@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "scheme": "messageai",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -48,6 +48,20 @@
           "sounds": [],
           "mode": "production",
           "iosDisplayInForeground": true
+        }
+      ],
+      "@cloudflare/realtimekit-react-native",
+      "@cloudflare/react-native-webrtc",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow MessageAI to use your camera for video calls"
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow MessageAI to use your microphone for calls"
         }
       ]
     ],

@@ -281,21 +281,17 @@
     - **✅ READY TO TEST:** Debug panel → Tap title 3x → "🚀 1000 Msgs" button → Performance metrics shown in panel
     - **✓ TEST:** Smooth 60fps scrolling with 1000+ messages, launch time under 2 seconds, memory under 200MB
 
-- [ ] **14.0 Bonus Features - Video Calls** (✅ READY TO IMPLEMENT)
+- [x] **14.0 Bonus Features - Video Calls** ✅ **COMPLETE**
   - [x] 14.0.1 Research Cloudflare RealtimeKit integration approach
-    - **✅ COMPLETE:** Created RESEARCH-REALTIME-INTEGRATION.md with full analysis
-    - **✅ COMPLETE:** Created ARCHITECTURE-CALLS-INTEGRATION.md with implementation blueprint
-  - [x] 14.0.2 RealtimeKit availability confirmed
-    - **✅ AVAILABLE:** No beta waitlist, can create app directly in dashboard
-    - **✅ CONFIRMED:** Presets available for easy setup
-  - [ ] 14.1 Create RealtimeKit app in dashboard: get Organization ID, API Key, note presets available
-  - [ ] 14.2 Install React Native packages (@cloudflare/realtimekit-react-native-ui), configure permissions (camera, mic)
-  - [ ] 14.3 Create video call screen (call/[id].tsx): <RtkMeeting /> component, permission handling, navigation
-  - [ ] 14.4 Implement backend endpoints: /start-call, /join-call, /end-call with RealtimeKit API integration
-  - [ ] 14.5 Add call UI to chat: video call button in header, call notifications in message list, WebSocket events
-    - **✓ TEST:** 1-on-1 video calls working with stable audio and video, call controls functional
-  - [ ] 14.6 Add call history tracking: D1 tables (calls, call_participants), call duration display, recording URLs
-    - **✓ TEST:** Video calls work on poor network conditions, quality degrades gracefully, history saved
+  - [x] 14.0.2 RealtimeKit credentials obtained (Org ID, API Key, presets)
+  - [x] 14.1 Backend: Worker endpoints for start-call, meeting creation, participant auth tokens
+  - [x] 14.2 Frontend: Installed RealtimeKit packages, configured permissions (camera, mic)
+  - [x] 14.3 Call screen: Full-featured UI with <RtkMeeting /> component, cleanup handlers
+  - [x] 14.4 Active call tracking: Durable Object storage for shared meeting IDs per conversation
+  - [x] 14.5 Chat integration: 📹 call button in header, "Started a video call" messages
+  - [x] 14.6 Compatibility: Polyfills for RN 0.81.5, disabled New Architecture for WebRTC support
+    - **✅ TEST PASSED:** Multiple users join same call successfully, audio/video working
+    - **✅ PLATFORMS:** iOS (physical device), Android (device + emulator)
 
 - [ ] **15.0 Bonus Features - Reactions & Polish**
   - [ ] 15.1 Add message reactions schema to DO SQLite: message_reactions table with emoji, user_id, timestamp

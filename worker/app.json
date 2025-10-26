@@ -1,0 +1,8 @@
+{
+  "android": {
+    "package": "com.sympathy2693.messageaiworker"
+  },
+  "ios": {
+    "bundleIdentifier": "com.sympathy2693.messageaiworker"
+  }
+}

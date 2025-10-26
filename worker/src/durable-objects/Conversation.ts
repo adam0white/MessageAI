@@ -154,6 +154,25 @@ export class Conversation extends DurableObject<Env> {
 		if (url.pathname === '/messages') {
 			return this.handleGetMessages(request);
 		}
+		
+		// Active call management endpoints
+		if (url.pathname === '/active-call') {
+			if (request.method === 'GET') {
+				const meetingId = await this.ctx.storage.get<string>('activeCallMeetingId');
+				return Response.json({ meetingId: meetingId || null });
+			}
+			
+			if (request.method === 'PUT') {
+				const body = await request.json() as { meetingId: string };
+				await this.ctx.storage.put('activeCallMeetingId', body.meetingId);
+				return Response.json({ success: true });
+			}
+			
+			if (request.method === 'DELETE') {
+				await this.ctx.storage.delete('activeCallMeetingId');
+				return Response.json({ success: true });
+			}
+		}
 
 		return new Response('Not found', { status: 404 });
 	}
