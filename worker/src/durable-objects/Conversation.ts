@@ -3,6 +3,7 @@ import type { ClientMessage, ServerMessage, Message } from '../types';
 import { getPushTokensByUserId, updateConversationLastMessage, updateUserLastRead, getLastReadTimestamps } from '../db/schema';
 import { sendMessageNotification, sendReadReceiptNotification } from '../handlers/notifications';
 import { generateEmbedding, AI_MODELS } from '../handlers/ai';
+import { extractUrl, fetchLinkPreview } from '../handlers/link-preview';
 import {
 	AgentState,
 	AgentWorkflowStep,
@@ -42,6 +43,7 @@ interface MessageRow {
 	media_url: string | null;
 	media_type: string | null;
 	media_size: number | null;
+	link_preview: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -87,6 +89,7 @@ export class Conversation extends DurableObject<Env> {
 	private async initializeSQL(): Promise<void> {
 		if (this.sqlInitialized) return;
 
+		// Create messages table
 		await this.ctx.storage.sql.exec(`
 			CREATE TABLE IF NOT EXISTS messages (
 				id TEXT PRIMARY KEY,
@@ -102,6 +105,18 @@ export class Conversation extends DurableObject<Env> {
 				updated_at TEXT NOT NULL
 			)
 		`);
+
+		// Check and add link_preview column if it doesn't exist (migration for existing DOs)
+		try {
+			const tableInfo = await this.ctx.storage.sql.exec(`PRAGMA table_info(messages)`).toArray() as Array<{name: string}>;
+			const hasLinkPreview = tableInfo.some((col: any) => col.name === 'link_preview');
+			
+			if (!hasLinkPreview) {
+				await this.ctx.storage.sql.exec(`ALTER TABLE messages ADD COLUMN link_preview TEXT`);
+			}
+		} catch (error) {
+			// Column might already exist, ignore error
+		}
 
 		await this.ctx.storage.sql.exec(`
 			CREATE INDEX IF NOT EXISTS idx_messages_conversation_created 
@@ -2271,6 +2286,17 @@ Generate realistic venue names (no fake addresses).`;
 				clientId: data.clientId, // Include clientId for deduplication
 			};
 
+			// Extract and fetch link preview if URL detected (only for text messages)
+			if (data.messageType === 'text') {
+				const url = extractUrl(data.content);
+				if (url) {
+					const preview = await fetchLinkPreview(url, this.env.LINK_CACHE);
+					if (preview) {
+						newMessage.linkPreview = preview;
+					}
+				}
+			}
+
 			// Save to SQLite storage
 			await this.saveMessage(newMessage);
 
@@ -2283,52 +2309,42 @@ Generate realistic venue names (no fake addresses).`;
 				session.userId // Sender ID
 			);
 
-			// Send confirmation to sender (check if still connected)
-			const confirmationResponse: ServerMessage = {
-				type: 'message_status',
-				clientId: data.clientId,
-				messageId,
-				status: 'sent',
-				serverTimestamp: now,
-			};
-			
-			try {
-				if (ws.readyState === WebSocket.OPEN) {
-					ws.send(JSON.stringify(confirmationResponse));
-				}
-			} catch (e) {
-				// Sender disconnected before confirmation - message still saved
-			}
-
-			// Broadcast to all other participants
+			// Broadcast new_message to ALL participants (including sender for link preview)
 			const broadcastMessage: ServerMessage = {
 				type: 'new_message',
 				message: newMessage,
 			};
-			const recipientsCount = this.broadcast(broadcastMessage, session.userId);
+			
+			// Broadcast to everyone - sender needs this for link preview
+			let recipientsCount = 0;
+			for (const [recipientWs, recipientSession] of this.sessions.entries()) {
+				try {
+					if (recipientWs.readyState === WebSocket.OPEN) {
+						recipientWs.send(JSON.stringify(broadcastMessage));
+						recipientsCount++;
+					}
+				} catch (e) {
+					// Ignore send errors
+				}
+			}
 			
 			// Send push notifications to offline participants
 			await this.sendPushNotificationsForMessage(newMessage, session.userId);
 			
-			// If message was successfully delivered to at least one recipient, mark as delivered
-			if (recipientsCount > 0) {
+			// If message was delivered to other recipients (not just sender), mark as delivered
+			if (recipientsCount > 1) { // More than just the sender
 				// Update message status in storage so it persists
 				await this.updateMessageStatus(messageId, 'delivered');
 				
 				const deliveredStatus: ServerMessage = {
 					type: 'message_status',
 					messageId,
+					clientId: data.clientId, // Include clientId for sender to match
 					status: 'delivered',
 					serverTimestamp: now,
 				};
-				// Send to sender (if still connected) and broadcast to all
-				try {
-					if (ws.readyState === WebSocket.OPEN) {
-						ws.send(JSON.stringify(deliveredStatus));
-					}
-				} catch (e) {
-					// Sender disconnected - status will sync on reconnect
-				}
+				
+				// Broadcast to everyone
 				this.broadcast(deliveredStatus);
 			}
 
@@ -2612,8 +2628,8 @@ Generate realistic venue names (no fake addresses).`;
 		const stmt = await this.ctx.storage.sql.exec(`
 			INSERT INTO messages (
 				id, conversation_id, sender_id, content, type, status,
-				media_url, media_type, media_size, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				media_url, media_type, media_size, link_preview, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, 
 			message.id,
 			message.conversationId,
@@ -2624,6 +2640,7 @@ Generate realistic venue names (no fake addresses).`;
 			message.mediaUrl || null,
 			message.mediaType || null,
 			message.mediaSize || null,
+			message.linkPreview ? JSON.stringify(message.linkPreview) : null,
 			message.createdAt,
 			message.updatedAt
 		);
@@ -2662,6 +2679,7 @@ Generate realistic venue names (no fake addresses).`;
 			mediaUrl: row.media_url || undefined,
 			mediaType: row.media_type || undefined,
 			mediaSize: row.media_size || undefined,
+			linkPreview: row.link_preview ? JSON.parse(row.link_preview) : undefined,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
 		}));
@@ -2887,6 +2905,118 @@ Generate realistic venue names (no fake addresses).`;
 		}), {
 			headers: { 'Content-Type': 'application/json' },
 		});
+	}
+
+	/**
+	 * Delete a single message (RPC method)
+	 */
+	async deleteMessage(messageId: string, conversationId: string): Promise<{ success: boolean; error?: string }> {
+		try {
+			await this.initializeSQL();
+			
+			// Get message details before deleting (for updating D1)
+			const msgCursor = this.ctx.storage.sql.exec('SELECT * FROM messages WHERE id = ?', messageId);
+			const msgRows = await msgCursor.toArray() as unknown as MessageRow[];
+			const deletedMessage = msgRows[0];
+			
+			// Delete message and its reactions
+			await this.ctx.storage.sql.exec('DELETE FROM message_reactions WHERE message_id = ?', messageId);
+			await this.ctx.storage.sql.exec('DELETE FROM messages WHERE id = ?', messageId);
+			
+			// If this was the latest message, update D1 with the new latest message
+			if (deletedMessage) {
+				const latestCursor = this.ctx.storage.sql.exec(
+					'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1',
+					conversationId
+				);
+				const latestRows = await latestCursor.toArray() as unknown as MessageRow[];
+				
+				if (latestRows.length > 0) {
+					const latestMsg = latestRows[0];
+					await updateConversationLastMessage(
+						this.env.DB,
+						conversationId,
+						latestMsg.created_at,
+						latestMsg.content,
+						latestMsg.sender_id
+					);
+				} else {
+					// No messages left, clear last message
+					await this.env.DB.prepare(
+						'UPDATE conversations SET last_message_at = NULL WHERE id = ?'
+					).bind(conversationId).run();
+				}
+			}
+			
+			// Broadcast deletion to ALL connected clients (including sender)
+			const deleteEvent: ServerMessage = {
+				type: 'error', // Reusing error type - could extend ServerMessage with 'message_deleted'
+				code: 'MESSAGE_DELETED',
+				message: messageId,
+			};
+			this.broadcast(deleteEvent); // Broadcast to everyone (no exclusions)
+			
+			return { success: true };
+		} catch (error) {
+			console.error('Failed to delete message:', error);
+			return { 
+				success: false, 
+				error: error instanceof Error ? error.message : 'Unknown error' 
+			};
+		}
+	}
+
+	/**
+	 * Delete entire conversation data from Durable Object (RPC method)
+	 * 
+	 * This is the ONLY way to ensure the DO is completely removed.
+	 * As per https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/
+	 * "The only way to remove all storage is to call deleteAll()"
+	 */
+	async deleteConversation(): Promise<{ success: boolean; error?: string }> {
+		try {
+			// Close all WebSocket connections FIRST
+			for (const [ws] of this.sessions) {
+				try {
+					if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+						ws.close(1000, 'Conversation deleted');
+					}
+				} catch (e) {
+					// Ignore errors during cleanup
+				}
+			}
+			this.sessions.clear();
+			
+			// Delete any configured alarms
+			await this.ctx.storage.deleteAlarm().catch(() => {
+				// No alarm configured, ignore error
+			});
+			
+			// Explicitly drop SQL tables before deleteAll()
+			// This ensures no ghost data remains
+			try {
+				await this.ctx.storage.sql.exec('DROP TABLE IF EXISTS message_reactions');
+				await this.ctx.storage.sql.exec('DROP TABLE IF EXISTS messages');
+			} catch (e) {
+				// Tables might not exist, ignore
+			}
+			
+			// Reset initialization flag so if DO stays in memory, it will reinitialize fresh
+			this.sqlInitialized = false;
+			
+			// This deletes ALL storage associated with this Durable Object instance
+			// including any remaining KV data, SQL metadata, etc.
+			// Per https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/
+			await this.ctx.storage.deleteAll();
+			
+			return { success: true };
+		} catch (error) {
+			console.error('Failed to delete conversation:', error);
+			return { 
+				success: false, 
+				error: error instanceof Error ? error.message : 'Unknown error' 
+			};
+		}
 	}
 }
 

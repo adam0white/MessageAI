@@ -388,6 +388,62 @@ Simple JSON messages over WebSocket:
 4. Broadcast to all participants
 5. Real-time update on all devices
 
+**Persistence Pattern:**
+- **Frontend**: Local SQLite `message_reactions` table with cascade deletion
+- **Backend**: Durable Object SQLite `message_reactions` table with batched queries
+- **Migration**: Automatic schema updates for existing databases
+- **Sync**: Real-time WebSocket events + local database storage
+- **Loading**: Reactions loaded from local DB when entering chats, then updated via WebSocket
+
+### Link Preview Pattern (Implemented ✅ - Phase 16.0)
+
+**Metadata Extraction:**
+- URL detection via regex: `/(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi`
+- Open Graph tags: og:title, og:description, og:image, og:site_name
+- Fallback to standard meta tags if OG not available
+- HTML entity decoding for special characters
+- Relative URL resolution for images/favicons
+
+**Caching Strategy:**
+- Workers KV with 24-hour TTL
+- Cache key: `link:{normalizedUrl}`
+- Prevents repeated fetches for same URL
+- 5-second fetch timeout protection
+
+**Integration:**
+- Automatic on message send (text messages only)
+- Non-blocking - doesn't delay message delivery
+- Sender receives full message via new_message broadcast
+- Preview stored as JSON in SQLite
+
+**Display:**
+- Preview card below message text
+- Image (150px height), title, description, site name
+- Works in message bubbles (light/dark mode)
+
+### Deletion Pattern (Implemented ✅ - Phase 16.0)
+
+**Durable Object Cleanup:**
+- Per Cloudflare best practices: `ctx.storage.deleteAll()` is the ONLY way to fully remove DO storage
+- Reset `sqlInitialized = false` before deleteAll() to prevent stale state if DO stays in memory
+- Delete alarms first: `ctx.storage.deleteAlarm()`
+- Close all WebSocket connections before cleanup
+
+**Message Deletion:**
+- Delete from DO SQLite (message + reactions)
+- Update D1 conversation lastMessage if deleting latest
+- Broadcast deletion event to all participants
+- Frontend removes from cache + local DB in real-time
+
+**Conversation Deletion:**
+- Delete from D1 (conversations + participants tables)
+- Call DO's deleteConversation() RPC to clean up storage
+- DO closes all connections and deletes all data
+- Frontend removes from cache + local DB
+
+**Critical Learning:**
+When a DO is deleted and recreated with same ID (e.g., same participant combination), it may be the SAME DO instance in memory. Must reset initialization flags or old data persists even after deleteAll()!
+
 ### Avatar System Pattern (Implemented ✅ - Phase 15.0)
 
 **Initials Generation:**

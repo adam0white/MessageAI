@@ -16,7 +16,7 @@ import {
 	handleRegisterPushToken, 
 	handleDeletePushToken 
 } from './handlers/push-tokens';
-import { handleSyncUserProfile, handleGetUserProfile } from './handlers/users';
+import { handleSyncUserProfile, handleGetUserProfile, handleLookupUsersByEmail } from './handlers/users';
 import { handleAiChat } from './handlers/ai';
 import { handleMediaUpload, handleMediaGet } from './handlers/media';
 import { handleStartCall, handleEndCall } from './handlers/calls';
@@ -240,6 +240,12 @@ export default {
 			}
 		}
 
+		// Lookup users by email endpoint
+		if (url.pathname === '/api/users/lookup-by-email' && request.method === 'POST') {
+			const response = await handleLookupUsersByEmail(request, env);
+			return addCorsHeaders(response);
+		}
+
 		// Conversation API endpoints
 		if (url.pathname === '/api/conversations') {
 			if (request.method === 'POST') {
@@ -258,6 +264,30 @@ export default {
 			return addCorsHeaders(response);
 		}
 		
+		// Delete conversation endpoint
+		if (conversationId && request.method === 'DELETE' && url.pathname === `/api/conversations/${conversationId}`) {
+			try {
+				// Delete from D1
+				await env.DB.prepare('DELETE FROM conversation_participants WHERE conversation_id = ?').bind(conversationId).run();
+				await env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind(conversationId).run();
+				
+				// Delete Durable Object storage
+				const doId = env.CONVERSATION.idFromName(conversationId);
+				const stub = env.CONVERSATION.get(doId);
+				await (stub as any).deleteConversation();
+				
+				return addCorsHeaders(new Response(JSON.stringify({ success: true }), {
+					headers: { 'Content-Type': 'application/json' }
+				}));
+			} catch (error) {
+				console.error('Delete conversation error:', error);
+				return addCorsHeaders(new Response(
+					JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				));
+			}
+		}
+		
 		// Start call endpoint
 		if (conversationId && url.pathname.endsWith('/start-call') && request.method === 'POST') {
 			const response = await handleStartCall(request, env, conversationId);
@@ -268,6 +298,28 @@ export default {
 		if (conversationId && url.pathname.endsWith('/end-call') && request.method === 'POST') {
 			const response = await handleEndCall(request, env, conversationId);
 			return addCorsHeaders(response);
+		}
+		
+		// Delete message endpoint
+		if (conversationId && url.pathname.match(/\/api\/conversations\/[^/]+\/messages\/[^/]+$/) && request.method === 'DELETE') {
+			const messageId = url.pathname.split('/')[5];
+			if (messageId) {
+				try {
+					const doId = env.CONVERSATION.idFromName(conversationId);
+					const stub = env.CONVERSATION.get(doId);
+					const result = await (stub as any).deleteMessage(messageId, conversationId);
+					
+					return addCorsHeaders(new Response(JSON.stringify(result), {
+						headers: { 'Content-Type': 'application/json' }
+					}));
+				} catch (error) {
+					console.error('Delete message error:', error);
+					return addCorsHeaders(new Response(
+						JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+						{ status: 500, headers: { 'Content-Type': 'application/json' } }
+					));
+				}
+			}
 		}
 	}
 

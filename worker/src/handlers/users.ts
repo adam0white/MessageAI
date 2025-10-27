@@ -103,4 +103,45 @@ export async function handleGetUserProfile(
 	}
 }
 
+/**
+ * Look up users by email addresses
+ * POST /api/users/lookup-by-email
+ */
+export async function handleLookupUsersByEmail(request: Request, env: Env): Promise<Response> {
+	try {
+		const body = await request.json() as { emails: string[] };
+		
+		if (!body.emails || !Array.isArray(body.emails) || body.emails.length === 0) {
+			return new Response(
+				JSON.stringify({ error: 'emails array is required' }),
+				{ status: 400, headers: { 'Content-Type': 'application/json' } }
+			);
+		}
 
+		// Query users by email
+		const placeholders = body.emails.map(() => '?').join(',');
+		const result = await env.DB
+			.prepare(`SELECT id, email, name FROM users WHERE email IN (${placeholders})`)
+			.bind(...body.emails)
+			.all<{ id: string; email: string; name: string | null }>();
+
+		const users = result.results || [];
+		
+		// Return map of email -> userId
+		const emailToUserId: Record<string, string> = {};
+		users.forEach(user => {
+			emailToUserId[user.email] = user.id;
+		});
+
+		return new Response(
+			JSON.stringify({ users: emailToUserId }),
+			{ headers: { 'Content-Type': 'application/json' } }
+		);
+	} catch (error) {
+		console.error('Lookup users by email error:', error);
+		return new Response(
+			JSON.stringify({ error: 'Failed to lookup users' }),
+			{ status: 500, headers: { 'Content-Type': 'application/json' } }
+		);
+	}
+}

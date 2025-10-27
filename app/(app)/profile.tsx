@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useUser } from '@clerk/clerk-expo';
+import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useRouter, Stack } from 'expo-router';
 import {
 	View,
@@ -13,19 +13,92 @@ import {
 	ActivityIndicator,
 	ScrollView,
 } from 'react-native';
+import { useSQLiteContext } from 'expo-sqlite';
 import { config } from '../../lib/config';
 import { useTheme, type ThemeMode } from '../../lib/contexts/ThemeContext';
+import { clearAllData, dropAllTables, initializeDatabase, forceMigration } from '../../lib/db/schema';
 
 const WORKER_URL = config.workerUrl;
 
 export default function ProfileScreen() {
+	const { signOut: clerkSignOut } = useAuth();
 	const { user } = useUser();
 	const router = useRouter();
+	const db = useSQLiteContext();
 	const { mode, activeTheme, colors, setTheme } = useTheme();
 	
 	const [firstName, setFirstName] = useState(user?.firstName || '');
 	const [lastName, setLastName] = useState(user?.lastName || '');
 	const [isUpdating, setIsUpdating] = useState(false);
+	const [showDebugPanel, setShowDebugPanel] = useState(false);
+	const [headerTapCount, setHeaderTapCount] = useState(0);
+	const headerTapTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+	const handleHeaderTap = () => {
+		setHeaderTapCount(prev => prev + 1);
+		
+		if (headerTapTimeoutRef.current) {
+			clearTimeout(headerTapTimeoutRef.current);
+		}
+		
+		headerTapTimeoutRef.current = setTimeout(() => {
+			if (headerTapCount + 1 >= 3) {
+				setShowDebugPanel(prev => !prev);
+			}
+			setHeaderTapCount(0);
+		}, 500);
+	};
+
+	async function handleClearDatabase() {
+		Alert.alert(
+			'Clear Database',
+			'This will delete all local messages and conversations. You will need to restart the app. Continue?',
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{
+					text: 'Clear & Restart',
+					style: 'destructive',
+					onPress: async () => {
+						try {
+							await dropAllTables(db);
+							await initializeDatabase();
+							Alert.alert('Success', 'Database cleared. Please restart the app.', [
+								{ text: 'OK', onPress: () => {
+									// Force close would be ideal but not available
+									// User needs to manually close and reopen
+								}}
+							]);
+						} catch (error) {
+							console.error('Clear database error:', error);
+							Alert.alert('Error', 'Failed to clear database');
+						}
+					},
+				},
+			]
+		);
+	}
+
+	async function handleFixDatabase() {
+		Alert.alert(
+			'Fix Database Schema',
+			'This will update your database schema to the latest version. Safe to run.',
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{
+					text: 'Fix Now',
+					onPress: async () => {
+						try {
+							await forceMigration(db);
+							Alert.alert('Success', 'Database schema updated! Try sending a message now.');
+						} catch (error) {
+							console.error('Fix database error:', error);
+							Alert.alert('Error', 'Failed to fix database. Try "Clear Database" instead.');
+						}
+					},
+				},
+			]
+		);
+	}
 
 	async function handleUpdateProfile() {
 		if (!user) return;
@@ -75,6 +148,11 @@ export default function ProfileScreen() {
 				options={{
 					title: 'Profile',
 					headerBackTitle: 'Back',
+					headerTitle: () => (
+						<TouchableOpacity onPress={handleHeaderTap} activeOpacity={0.7}>
+							<Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>Profile</Text>
+						</TouchableOpacity>
+					),
 				}}
 			/>
 			
@@ -151,8 +229,64 @@ export default function ProfileScreen() {
 							</TouchableOpacity>
 						</View>
 
+					{showDebugPanel && (
 						<View style={styles.section}>
-							<Text style={styles.sectionTitle}>Appearance</Text>
+							<Text style={[styles.sectionTitle, { color: colors.text }]}>Debug Tools</Text>
+							
+							<TouchableOpacity
+								style={[styles.button, { backgroundColor: colors.primary }]}
+								onPress={handleFixDatabase}
+							>
+								<Text style={styles.buttonText}>🔧 Fix Database Schema</Text>
+							</TouchableOpacity>
+							<Text style={[styles.helpText, { color: colors.textSecondary, marginTop: 8 }]}>
+								Use this if you see errors about missing database columns
+							</Text>
+
+							<TouchableOpacity
+								style={[styles.button, { backgroundColor: '#ff3b30', marginTop: 16 }]}
+								onPress={handleClearDatabase}
+							>
+								<Text style={styles.buttonText}>🗑️ Clear Local Database</Text>
+							</TouchableOpacity>
+							<Text style={[styles.helpText, { color: colors.textSecondary, marginTop: 8, marginBottom: 16 }]}>
+								Deletes all local data. Requires app restart.
+							</Text>
+						</View>
+					)}
+
+					<View style={styles.section}>
+						<TouchableOpacity
+							style={[styles.button, { backgroundColor: '#ff3b30' }]}
+							onPress={async () => {
+								Alert.alert(
+									'Sign Out',
+									'Are you sure you want to sign out?',
+									[
+										{ text: 'Cancel', style: 'cancel' },
+										{
+											text: 'Sign Out',
+											style: 'destructive',
+											onPress: async () => {
+												try {
+													await clearAllData(db);
+												} catch (error) {
+													console.error('Failed to clear database on logout:', error);
+												}
+												await clerkSignOut();
+												router.replace('/auth/sign-in');
+											},
+										},
+									]
+								);
+							}}
+						>
+							<Text style={styles.buttonText}>Sign Out</Text>
+						</TouchableOpacity>
+					</View>
+
+					<View style={styles.section}>
+						<Text style={styles.sectionTitle}>Appearance</Text>
 							
 							<View style={styles.themeSelector}>
 								{(['light', 'dark', 'auto'] as ThemeMode[]).map((themeMode) => (

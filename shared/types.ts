@@ -29,6 +29,15 @@ export interface UserPresence {
 // Message Models
 // ============================================================================
 
+export interface LinkPreview {
+	url: string;
+	title?: string;
+	description?: string;
+	image?: string;
+	siteName?: string;
+	favicon?: string;
+}
+
 export interface Message {
 	id: string;
 	conversationId: string;
@@ -43,6 +52,9 @@ export interface Message {
 	mediaUrl?: string;
 	mediaType?: string;
 	mediaSize?: number;
+	
+	// Link preview for URLs in messages
+	linkPreview?: LinkPreview;
 	
 	// Reactions (grouped by emoji)
 	reactions?: Record<string, string[]>; // emoji -> array of userIds
@@ -339,6 +351,7 @@ export interface DBMessage {
 	media_url: string | null;
 	media_type: string | null;
 	media_size: number | null;
+	link_preview: string | null;
 	created_at: string;
 	updated_at: string;
 	client_id: string | null;

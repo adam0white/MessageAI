@@ -45,7 +45,9 @@
 	"migrations": [
 		{
 			"tag": "v1",
-			"new_sqlite_classes": ["Conversation"]
+			"new_sqlite_classes": [
+				"Conversation"
+			]
 		}
 	],
 	/**
@@ -85,6 +87,16 @@
 	"r2_buckets": [
 		{
 			"binding": "MEDIA_BUCKET"
+		}
+	],
+	/**
+	 * KV Namespace for Link Preview Cache
+	 * https://developers.cloudflare.com/kv/
+	 */
+	"kv_namespaces": [
+		{
+			"binding": "LINK_CACHE",
+			"id": "24944a04c9e146e89990a0dc1403dbb3"
 		}
 	]
 }

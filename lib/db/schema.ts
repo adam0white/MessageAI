@@ -22,6 +22,9 @@ export async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
 	// Create tables
 	await createTables(db);
 
+	// Run migrations for existing databases
+	await runMigrations(db);
+
 	return db;
 }
 
@@ -85,6 +88,7 @@ async function createTables(db: SQLite.SQLiteDatabase): Promise<void> {
 			media_url TEXT,
 			media_type TEXT,
 			media_size INTEGER,
+			link_preview TEXT,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			client_id TEXT,
@@ -99,8 +103,21 @@ async function createTables(db: SQLite.SQLiteDatabase): Promise<void> {
 			ON messages(sender_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_client_id 
 			ON messages(client_id) WHERE client_id IS NOT NULL;
-		CREATE INDEX IF NOT EXISTS idx_messages_local_only 
+		CREATE INDEX IF NOT EXISTS idx_messages_local_only
 			ON messages(local_only) WHERE local_only = 1;
+
+		-- Message reactions table (local cache of reactions)
+		CREATE TABLE IF NOT EXISTS message_reactions (
+			message_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			emoji TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (message_id, user_id, emoji),
+			FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_reactions_message
+			ON message_reactions(message_id);
 
 		-- Read receipts table
 		CREATE TABLE IF NOT EXISTS read_receipts (
@@ -166,20 +183,87 @@ export async function getDatabaseStats(db: SQLite.SQLiteDatabase): Promise<{
 	conversations: number;
 	messages: number;
 	readReceipts: number;
+	reactions: number;
 }> {
-	const result = await db.getAllAsync<{ 
-		users: number; 
-		conversations: number; 
-		messages: number; 
+	const result = await db.getAllAsync<{
+		users: number;
+		conversations: number;
+		messages: number;
 		readReceipts: number;
+		reactions: number;
 	}>(`
-		SELECT 
+		SELECT
 			(SELECT COUNT(*) FROM users) as users,
 			(SELECT COUNT(*) FROM conversations) as conversations,
 			(SELECT COUNT(*) FROM messages) as messages,
-			(SELECT COUNT(*) FROM read_receipts) as readReceipts
+			(SELECT COUNT(*) FROM read_receipts) as readReceipts,
+			(SELECT COUNT(*) FROM message_reactions) as reactions
 	`);
 
-	return result[0] || { users: 0, conversations: 0, messages: 0, readReceipts: 0 };
+	return result[0] || { users: 0, conversations: 0, messages: 0, readReceipts: 0, reactions: 0 };
 }
 
+/**
+ * Run migrations for existing databases
+ */
+async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
+	try {
+		// Check if link_preview column exists, if not add it
+		const tableInfo = await db.getAllAsync<{ name: string }>(
+			`PRAGMA table_info(messages)`
+		);
+
+		const hasLinkPreview = tableInfo.some(col => col.name === 'link_preview');
+
+		if (!hasLinkPreview) {
+			console.log('🔄 Running migration: Adding link_preview column...');
+			await db.execAsync('ALTER TABLE messages ADD COLUMN link_preview TEXT;');
+			console.log('✅ Migration complete: link_preview column added');
+		}
+
+		// Check if message_reactions table exists, if not create it
+		const tables = await db.getAllAsync<{ name: string }>(
+			`SELECT name FROM sqlite_master WHERE type='table' AND name='message_reactions'`
+		);
+
+		if (tables.length === 0) {
+			console.log('🔄 Running migration: Creating message_reactions table...');
+			await db.execAsync(`
+				CREATE TABLE message_reactions (
+					message_id TEXT NOT NULL,
+					user_id TEXT NOT NULL,
+					emoji TEXT NOT NULL,
+					created_at TEXT NOT NULL,
+					PRIMARY KEY (message_id, user_id, emoji),
+					FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+				)
+			`);
+			await db.execAsync('CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id)');
+			console.log('✅ Migration complete: message_reactions table created');
+		} else {
+			// Check if reactions table has the correct schema (handle schema evolution)
+			const reactionTableInfo = await db.getAllAsync<{ name: string }>(
+				`PRAGMA table_info(message_reactions)`
+			);
+			const hasCreatedAt = reactionTableInfo.some(col => col.name === 'created_at');
+
+			if (!hasCreatedAt) {
+				console.log('🔄 Running migration: Adding created_at column to message_reactions...');
+				await db.execAsync('ALTER TABLE message_reactions ADD COLUMN created_at TEXT NOT NULL DEFAULT \'1970-01-01T00:00:00.000Z\'');
+				console.log('✅ Migration complete: created_at column added to message_reactions');
+			}
+		}
+	} catch (error) {
+		console.error('Migration error:', error);
+		// Don't throw - allow app to continue
+	}
+}
+
+/**
+ * Force migration of database (useful for fixing schema issues)
+ */
+export async function forceMigration(db: SQLite.SQLiteDatabase): Promise<void> {
+	console.log('🔄 Force migrating database...');
+	await runMigrations(db);
+	console.log('✅ Force migration complete');
+}

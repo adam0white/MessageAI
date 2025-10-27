@@ -1,7 +1,39 @@
 # Active Context: MessageAI
 
-**Last Updated**: 2025-10-26  
-**Phase**: Phase 15.0 COMPLETE ✅ (Reactions, Avatars, Dark Mode, Polish)
+**Last Updated**: 2025-10-27
+**Phase**: Phase 16.0 COMPLETE ✅ (All Critical Bugs Fixed)
+
+## 🎯 **CRITICAL BUG FIX - Duplicate Messages Eliminated**
+
+**Issue**: Sender saw message duplicated when receiving server confirmation
+**Root Cause**: Race condition between `message_status` and `new_message` WebSocket events
+**Solution**: Enhanced matching logic with multiple fallback strategies and comprehensive deduplication
+
+**Technical Implementation**:
+- Multi-strategy message matching (clientId, serverId, content+timestamp)
+- Defensive deduplication before adding any message
+- Final safeguard that removes exact duplicates
+- Comprehensive logging for debugging
+- Database UPSERT operations to prevent constraint errors
+
+## 🎯 **REACTIONS PERSISTENCE IMPLEMENTED**
+
+**Issue**: Reactions disappeared when exiting and re-entering chats
+**Root Cause**: Reactions only stored in React Query cache, not local SQLite database
+**Solution**: Added complete frontend/backend reactions persistence system
+
+**Frontend Implementation**:
+- Added `message_reactions` table to local SQLite schema
+- Automatic migration support for existing databases
+- Reactions loaded from local DB when entering chats
+- Reactions saved to local DB when received via WebSocket
+- Proper cascade deletion when messages are deleted
+
+**Backend Integration**:
+- Reactions already stored in Durable Object SQLite (message_reactions table)
+- Reactions loaded and attached to messages when fetching history
+- Real-time reaction sync via WebSocket events
+- Proper cleanup when conversations are deleted
 
 ## Current Status
 
@@ -205,6 +237,46 @@ Backend delivers messages faster than React can process locally - Cloudflare Wor
 - ✅ Fixed Android keyboard white bar (removed height behavior)
 - ✅ Suppressed benign "keep awake" errors on locked screen
 
+## Phase 16 Achievements (Oct 27, 2025)
+
+**Link Preview System:**
+- ✅ Workers KV caching (24hr TTL)
+- ✅ Open Graph metadata extraction (title, description, image, siteName, favicon)
+- ✅ Automatic URL detection in text messages
+- ✅ Beautiful preview cards in MessageBubble
+- ✅ Automatic DO SQLite migration for existing conversations
+- ✅ 5-second fetch timeout protection
+- ✅ Fallback to standard meta tags if OG tags missing
+
+**Deletion System:**
+- ✅ DELETE /api/conversations/:id with proper DO cleanup
+- ✅ DELETE /api/conversations/:id/messages/:messageId
+- ✅ `ctx.storage.deleteAll()` for complete DO removal (per Cloudflare best practices)
+- ✅ Long-press conversation to delete (with confirmation)
+- ✅ Long-press own message to delete (with confirmation)
+- ✅ Real-time deletion sync via WebSocket to all participants
+- ✅ Chat list updates when latest message deleted
+- ✅ Reset `sqlInitialized = false` to fix data persistence bug
+
+**Email-Based Chat Creation:**
+- ✅ POST /api/users/lookup-by-email endpoint
+- ✅ New chat modal now accepts email addresses
+- ✅ Validates emails and shows warnings for not-found addresses
+- ✅ More user-friendly than raw user IDs
+
+**UX Polish:**
+- ✅ Sign Out moved to Profile screen (with confirmation)
+- ✅ Debug tools hidden behind triple-click Profile header
+- ✅ Removed "Your User ID" section from new chat modal
+- ✅ Database Management: Fix Schema & Clear Database tools
+
+**Critical Bug Fixes:**
+- 🔧 Fixed DO deletion - data was persisting after deleteAll() because sqlInitialized flag wasn't reset
+- 🔧 Fixed message status updates - sender now receives new_message broadcast for link preview
+- 🔧 Fixed optimistic message replacement - properly replaces by clientId with server version
+- 🔧 Fixed chat list - updates lastMessage when deleting the latest message
+- 🔧 Fixed message deletion sync - all participants see deletion in real-time
+
 ## Next Steps
-- Optional: Phase 14.0 - Video Calls (Cloudflare RealtimeKit) - already partially implemented
+- Optional: Phase 17.0 - Final testing, architecture diagram, documentation
 - Optional: Push notification improvements (FCM for background)

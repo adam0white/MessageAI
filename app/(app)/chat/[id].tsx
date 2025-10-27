@@ -31,9 +31,10 @@ import { useTyping } from '../../../hooks/useTyping';
 import { wsClient } from '../../../lib/api/websocket';
 import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
-import { insertMessage } from '../../../lib/db/queries';
+import { insertMessage, deleteMessage as deleteLocalMessage } from '../../../lib/db/queries';
 import { config } from '../../../lib/config';
 import { useTheme } from '../../../lib/contexts/ThemeContext';
+import { deleteMessageAPI } from '../../../lib/api/delete';
 
 const WORKER_URL = config.workerUrl;
 
@@ -354,6 +355,45 @@ export default function ChatScreen() {
 		}
 	};
 
+
+	const handleDeleteMessage = async (messageId: string) => {
+		Alert.alert(
+			'Delete Message',
+			'Delete this message? This cannot be undone.',
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{
+					text: 'Delete',
+					style: 'destructive',
+					onPress: async () => {
+						try {
+							const token = await getToken();
+							if (!token) {
+								Alert.alert('Error', 'Not authenticated');
+								return;
+							}
+
+							// Delete from backend (also removes from Durable Object)
+							const result = await deleteMessageAPI(conversationId, messageId, token);
+							
+							if (!result.success) {
+								throw new Error(result.error || 'Failed to delete');
+							}
+
+							// Delete from local database
+							await deleteLocalMessage(db, messageId);
+
+							// Refresh messages
+							refetch();
+						} catch (error) {
+							console.error('Delete message error:', error);
+							Alert.alert('Error', 'Failed to delete message');
+						}
+					},
+				},
+			]
+		);
+	};
 
 	const pickImage = async () => {
 		try {
@@ -915,8 +955,9 @@ export default function ChatScreen() {
 			message={item} 
 			isGroupChat={isGroupChat}
 			conversationId={conversationId}
+			onDelete={handleDeleteMessage}
 		/>
-	), [isGroupChat, conversationId]);
+	), [isGroupChat, conversationId, handleDeleteMessage]);
 
 	return (
 		<>
@@ -1778,7 +1819,7 @@ const getStyles = (colors: any) => StyleSheet.create({
 		borderRadius: 20,
 		fontSize: 16,
 		marginRight: 8,
-		color: '#000',
+		color: colors.text,
 		textAlignVertical: 'top',
 	},
 	sendButton: {

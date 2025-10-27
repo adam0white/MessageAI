@@ -3,17 +3,22 @@ import { useAuth, useUser } from '@clerk/clerk-expo';
 import { useRouter, Stack } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, TextInput, Platform } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useConversations, useCreateConversation } from '../../hooks/useConversations';
 import type { ConversationPreview } from '../../lib/api/types';
 import { useAuthStore } from '../../lib/stores/auth';
-import { clearAllData } from '../../lib/db/queries';
+import { useQueryClient } from '@tanstack/react-query';
+import { clearAllData, deleteConversation as deleteLocalConv } from '../../lib/db/queries';
 import { useTheme } from '../../lib/contexts/ThemeContext';
+import { deleteConversationAPI } from '../../lib/api/delete';
+import { config } from '../../lib/config';
 
 export default function ConversationListScreen() {
-	const { signOut } = useAuth();
+	const { signOut, getToken } = useAuth();
 	const { user } = useUser();
 	const router = useRouter();
 	const db = useSQLiteContext();
+	const queryClient = useQueryClient();
 	const { userId } = useAuthStore();
 	const { colors } = useTheme();
 	const { conversations, isLoading, refetch } = useConversations();
@@ -21,6 +26,51 @@ export default function ConversationListScreen() {
 	const [showUserIdModal, setShowUserIdModal] = useState(false);
 	const [conversationName, setConversationName] = useState('');
 	const [participantIds, setParticipantIds] = useState<string>(''); // Comma-separated user IDs
+
+	async function handleDeleteConversation(conversationId: string, conversationName: string) {
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+		
+		Alert.alert(
+			'Delete Conversation',
+			`Delete "${conversationName}"? This will permanently delete all messages.`,
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{
+					text: 'Delete',
+					style: 'destructive',
+					onPress: async () => {
+						try {
+							const token = await getToken();
+							if (!token) {
+								Alert.alert('Error', 'Not authenticated');
+								return;
+							}
+
+						// Delete from backend (also cleans up Durable Object)
+						const result = await deleteConversationAPI(conversationId, token);
+						
+						if (!result.success) {
+							throw new Error(result.error || 'Failed to delete');
+						}
+
+						// Delete from local database
+						await deleteLocalConv(db, conversationId);
+
+						// Clear React Query cache for this conversation's messages
+						queryClient.removeQueries({ queryKey: ['messages', conversationId] });
+						queryClient.removeQueries({ queryKey: ['conversation', conversationId] });
+
+						// Refresh conversation list
+						refetch();
+						} catch (error) {
+							console.error('Delete conversation error:', error);
+							Alert.alert('Error', 'Failed to delete conversation');
+						}
+					},
+				},
+			]
+		);
+	}
 
 	async function handleSignOut() {
 		try {
@@ -106,36 +156,72 @@ export default function ConversationListScreen() {
 			return;
 		}
 
-		// Parse participant IDs from comma-separated string
+		// Parse participant emails from comma-separated string
 		const trimmedParticipantIds = participantIds.trim();
-		const parsedParticipantIds = trimmedParticipantIds
-			? trimmedParticipantIds.split(',').map(id => id.trim()).filter(id => id.length > 0)
+		const emails = trimmedParticipantIds
+			? trimmedParticipantIds.split(',').map(email => email.trim().toLowerCase()).filter(email => email.length > 0)
 			: [];
 
-		// Build participant list (always include current user)
-		const allParticipants = [userId, ...parsedParticipantIds];
-
-		// Determine conversation type based on participant count
-		// 1 participant = self-chat
-		// 2 participants = direct chat
-		// 3+ participants = group chat
-		const conversationType: 'direct' | 'group' = allParticipants.length >= 3 ? 'group' : 'direct';
-		const trimmedName = conversationName.trim();
-
 		try {
-			const conversation = await createConversationAsync({
-				type: conversationType,
-				participantIds: allParticipants,
-				name: trimmedName || undefined,
-			});
-			setShowUserIdModal(false);
-			setConversationName('');
-			setParticipantIds('');
-			router.push(`/chat/${conversation.id}`);
+			let userIds: string[] = [userId]; // Start with current user
+
+			if (emails.length > 0) {
+				// Look up user IDs by email
+				const response = await fetch(`${config.workerUrl}/api/users/lookup-by-email`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ emails }),
+				});
+
+				if (!response.ok) {
+					throw new Error('Failed to lookup users by email');
+				}
+
+				const data = await response.json() as { users: Record<string, string> };
+				const foundUserIds = Object.values(data.users);
+
+				if (foundUserIds.length === 0) {
+					Alert.alert('Error', 'No users found with those email addresses');
+					return;
+				}
+
+				if (foundUserIds.length < emails.length) {
+					const foundEmails = Object.keys(data.users);
+					const notFound = emails.filter(e => !foundEmails.includes(e));
+					Alert.alert(
+						'Warning',
+						`${notFound.length} email(s) not found: ${notFound.join(', ')}. Continue with ${foundUserIds.length} participant(s)?`,
+						[
+							{ text: 'Cancel', style: 'cancel' },
+							{ text: 'Continue', onPress: () => proceedWithCreation([...userIds, ...foundUserIds]) }
+						]
+					);
+					return;
+				}
+
+				userIds = [...userIds, ...foundUserIds];
+			}
+
+			await proceedWithCreation(userIds);
 		} catch (error) {
 			console.error('❌ Failed to create conversation:', error);
 			Alert.alert('Error', 'Failed to create conversation: ' + (error instanceof Error ? error.message : 'Unknown'));
 		}
+	}
+
+	async function proceedWithCreation(userIds: string[]) {
+		const conversationType: 'direct' | 'group' = userIds.length >= 3 ? 'group' : 'direct';
+		const trimmedName = conversationName.trim();
+
+		const conversation = await createConversationAsync({
+			type: conversationType,
+			participantIds: userIds,
+			name: trimmedName || undefined,
+		});
+		setShowUserIdModal(false);
+		setConversationName('');
+		setParticipantIds('');
+		router.push(`/chat/${conversation.id}`);
 	}
 
 	const styles = getStyles(colors);
@@ -180,11 +266,8 @@ export default function ConversationListScreen() {
 							<Text style={styles.profileButtonText}>Profile</Text>
 						</TouchableOpacity>
 					</View>
-					</View>
-					<TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
-						<Text style={styles.signOutText}>Sign Out</Text>
-					</TouchableOpacity>
 				</View>
+			</View>
 
 		<FlatList<ConversationPreview>
 			data={conversations}
@@ -201,6 +284,7 @@ export default function ConversationListScreen() {
 					<TouchableOpacity 
 						style={styles.conversationItem}
 						onPress={() => handleConversationPress(item.id)}
+						onLongPress={() => handleDeleteConversation(item.id, conversationName)}
 					>
 				{/* Avatar will use first letter as fallback */}
 				<View style={[styles.avatar, { backgroundColor: getAvatarColor(conversationName) }]}>
@@ -258,12 +342,6 @@ export default function ConversationListScreen() {
 				>
 					<Text style={styles.modalTitle}>New Conversation</Text>
 					
-					<Text style={styles.modalLabel}>Your User ID (share with others):</Text>
-					<View style={styles.userIdContainer}>
-						<Text style={styles.userIdText} selectable>{userId}</Text>
-						<Text style={styles.userIdCopyHint}>Long press to copy</Text>
-					</View>
-					
 					<Text style={styles.modalLabel}>Conversation Name (optional):</Text>
 					<TextInput
 						style={styles.modalInput}
@@ -276,14 +354,15 @@ export default function ConversationListScreen() {
 
 					<Text style={styles.modalLabel}>Add Participants:</Text>
 					<Text style={styles.helpText}>
-						Enter user IDs separated by commas. Leave empty for self-chat, 1 ID for direct chat, 2+ for group.
+						Enter email addresses separated by commas. Leave empty for self-chat (notes), 1 email for direct chat, 2+ for group.
 					</Text>
 					<TextInput
 						style={[styles.modalInput, styles.multilineInput]}
 						value={participantIds}
 						onChangeText={setParticipantIds}
-						placeholder="user_xxx, user_yyy..."
+						placeholder="alice@example.com, bob@example.com"
 						placeholderTextColor="#999"
+						keyboardType="email-address"
 						autoCapitalize="none"
 						autoCorrect={false}
 						multiline

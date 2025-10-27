@@ -12,6 +12,7 @@ interface MessageBubbleProps {
 	isGroupChat?: boolean; // Whether this is a group conversation
 	showSenderName?: boolean; // Explicitly show sender name (for groups)
 	conversationId?: string; // For sending reactions
+	onDelete?: (messageId: string) => void; // Optional delete callback
 }
 
 // Quick emoji picker for reactions
@@ -61,13 +62,14 @@ const ReactionBubble = React.memo(function ReactionBubble({
 	);
 });
 
-export const MessageBubble = React.memo(function MessageBubble({ message, isGroupChat = false, showSenderName = false, conversationId }: MessageBubbleProps) {
+export const MessageBubble = React.memo(function MessageBubble({ message, isGroupChat = false, showSenderName = false, conversationId, onDelete }: MessageBubbleProps) {
 	const db = useSQLiteContext();
 	const { userId } = useAuthStore();
 	const isOwnMessage = message.senderId === userId;
 	const [senderName, setSenderName] = useState<string | null>(null);
 	const [showLightbox, setShowLightbox] = useState(false);
 	const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+	const [showDeleteMenu, setShowDeleteMenu] = useState(false);
 	const [fadeAnim] = useState(new Animated.Value(0));
 	const [slideAnim] = useState(new Animated.Value(20));
 
@@ -152,6 +154,22 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 		setShowEmojiPicker(false);
 	};
 
+	// Handle long press - show either emoji picker or delete menu
+	const handleLongPress = () => {
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+		
+		if (conversationId && !isOwnMessage) {
+			// Others' messages: show emoji picker
+			setShowEmojiPicker(true);
+		} else if (isOwnMessage && onDelete) {
+			// Own messages: show delete menu
+			setShowDeleteMenu(true);
+		} else if (conversationId) {
+			// Fallback to emoji picker
+			setShowEmojiPicker(true);
+		}
+	};
+
 	return (
 		<Animated.View style={[
 			styles.container,
@@ -168,12 +186,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 				)}
 				
 				<TouchableOpacity
-					onLongPress={() => {
-						if (conversationId) {
-							Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-							setShowEmojiPicker(true);
-						}
-					}}
+					onLongPress={handleLongPress}
 					activeOpacity={0.9}
 					style={[
 						styles.bubble,
@@ -199,12 +212,44 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 							)}
 						</TouchableOpacity>
 					) : (
-						<Text style={[
-							styles.messageText,
-							isOwnMessage ? styles.ownText : styles.otherText
-						]}>
-							{message.content}
-						</Text>
+						<>
+							<Text style={[
+								styles.messageText,
+								isOwnMessage ? styles.ownText : styles.otherText
+							]}>
+								{message.content}
+							</Text>
+							
+							{/* Link Preview */}
+							{message.linkPreview && (
+								<View style={styles.linkPreviewContainer}>
+									{message.linkPreview.image && (
+										<Image 
+											source={{ uri: message.linkPreview.image }}
+											style={styles.linkPreviewImage}
+											resizeMode="cover"
+										/>
+									)}
+									<View style={styles.linkPreviewContent}>
+										{message.linkPreview.title && (
+											<Text style={styles.linkPreviewTitle} numberOfLines={2}>
+												{message.linkPreview.title}
+											</Text>
+										)}
+										{message.linkPreview.description && (
+											<Text style={styles.linkPreviewDescription} numberOfLines={2}>
+												{message.linkPreview.description}
+											</Text>
+										)}
+										{message.linkPreview.siteName && (
+											<Text style={styles.linkPreviewSite}>
+												{message.linkPreview.siteName}
+											</Text>
+										)}
+									</View>
+								</View>
+							)}
+						</>
 					)}
 					<View style={styles.footer}>
 						<Text style={[
@@ -262,6 +307,40 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 								<Text style={styles.emojiButtonText}>{emoji}</Text>
 							</TouchableOpacity>
 						))}
+					</View>
+				</TouchableOpacity>
+			</Modal>
+
+			{/* Delete Menu Modal */}
+			<Modal
+				visible={showDeleteMenu}
+				transparent
+				animationType="fade"
+				onRequestClose={() => setShowDeleteMenu(false)}
+			>
+				<TouchableOpacity
+					style={styles.emojiPickerOverlay}
+					activeOpacity={1}
+					onPress={() => setShowDeleteMenu(false)}
+				>
+					<View style={styles.deleteMenuContainer}>
+						<TouchableOpacity
+							style={styles.deleteButton}
+							onPress={() => {
+								setShowDeleteMenu(false);
+								if (onDelete) {
+									onDelete(message.id);
+								}
+							}}
+						>
+							<Text style={styles.deleteButtonText}>🗑️ Delete Message</Text>
+						</TouchableOpacity>
+						<TouchableOpacity
+							style={styles.cancelButton}
+							onPress={() => setShowDeleteMenu(false)}
+						>
+							<Text style={styles.cancelButtonText}>Cancel</Text>
+						</TouchableOpacity>
 					</View>
 				</TouchableOpacity>
 			</Modal>
@@ -436,6 +515,65 @@ const styles = StyleSheet.create({
 	},
 	emojiButtonText: {
 		fontSize: 28,
+	},
+	linkPreviewContainer: {
+		marginTop: 8,
+		borderRadius: 8,
+		overflow: 'hidden',
+		backgroundColor: 'rgba(0,0,0,0.05)',
+	},
+	linkPreviewImage: {
+		width: '100%',
+		height: 150,
+	},
+	linkPreviewContent: {
+		padding: 10,
+	},
+	linkPreviewTitle: {
+		fontSize: 14,
+		fontWeight: '600',
+		color: '#000',
+		marginBottom: 4,
+	},
+	linkPreviewDescription: {
+		fontSize: 12,
+		color: '#666',
+		marginBottom: 4,
+	},
+	linkPreviewSite: {
+		fontSize: 11,
+		color: '#999',
+	},
+	deleteMenuContainer: {
+		backgroundColor: '#fff',
+		borderRadius: 16,
+		padding: 8,
+		minWidth: 200,
+		shadowColor: '#000',
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.25,
+		shadowRadius: 4,
+		elevation: 5,
+	},
+	deleteButton: {
+		padding: 16,
+		alignItems: 'center',
+		borderBottomWidth: 1,
+		borderBottomColor: '#eee',
+	},
+	deleteButtonText: {
+		fontSize: 16,
+		color: '#ff3b30',
+		fontWeight: '600',
+	},
+	cancelButton: {
+		padding: 16,
+		alignItems: 'center',
+	},
+	cancelButtonText: {
+		fontSize: 16,
+		color: '#007AFF',
+		fontWeight: '500',
 	},
 });
 

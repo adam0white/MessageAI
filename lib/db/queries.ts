@@ -273,9 +273,9 @@ export async function insertMessage(
 	await db.runAsync(
 		`INSERT INTO messages (
 			id, conversation_id, sender_id, content, type, status,
-			media_url, media_type, media_size, created_at, updated_at,
+			media_url, media_type, media_size, link_preview, created_at, updated_at,
 			client_id, local_only
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			message.id,
 			message.conversationId,
@@ -286,6 +286,7 @@ export async function insertMessage(
 			message.mediaUrl || null,
 			message.mediaType || null,
 			message.mediaSize || null,
+			message.linkPreview ? JSON.stringify(message.linkPreview) : null,
 			message.createdAt,
 			message.updatedAt,
 			message.clientId || null,
@@ -295,11 +296,24 @@ export async function insertMessage(
 
 	// Update conversation's last_message_at
 	await db.runAsync(
-		`UPDATE conversations 
+		`UPDATE conversations
 		SET last_message_at = ?, updated_at = ?
 		WHERE id = ?`,
 		[message.createdAt, message.updatedAt, message.conversationId]
 	);
+
+	// Save reactions if they exist
+	if (message.reactions) {
+		for (const [emoji, userIds] of Object.entries(message.reactions)) {
+			for (const userId of userIds) {
+				await db.runAsync(
+					`INSERT OR REPLACE INTO message_reactions (message_id, user_id, emoji, created_at)
+					VALUES (?, ?, ?, ?)`,
+					[message.id, userId, emoji, message.createdAt]
+				);
+			}
+		}
+	}
 }
 
 export async function updateMessageStatus(
@@ -318,9 +332,43 @@ export async function updateMessageByClientId(
 	clientId: string,
 	updates: { id: string; status: Message['status'] }
 ): Promise<void> {
+	// Use UPSERT to avoid UNIQUE constraint errors in case message already exists with server ID
+	// This can happen if new_message arrives before message_status
+	const message = await db.getFirstAsync<DBMessage>(
+		'SELECT * FROM messages WHERE client_id = ?',
+		[clientId]
+	);
+	
+	if (!message) return; // Message not found, nothing to update
+	
+	// Delete old message if ID is changing
+	if (message.id !== updates.id) {
+		await db.runAsync('DELETE FROM messages WHERE id = ?', [message.id]);
+	}
+	
+	// Insert with new ID (or update if ID unchanged)
 	await db.runAsync(
-		'UPDATE messages SET id = ?, status = ?, local_only = 0, updated_at = ? WHERE client_id = ?',
-		[updates.id, updates.status, new Date().toISOString(), clientId]
+		`INSERT OR REPLACE INTO messages (
+			id, conversation_id, sender_id, content, type, status,
+			media_url, media_type, media_size, link_preview, created_at, updated_at,
+			client_id, local_only
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			updates.id,
+			message.conversation_id,
+			message.sender_id,
+			message.content,
+			message.type,
+			updates.status,
+			message.media_url,
+			message.media_type,
+			message.media_size,
+			message.link_preview,
+			message.created_at,
+			new Date().toISOString(),
+			clientId,
+			0 // local_only = false
+		]
 	);
 }
 
@@ -331,7 +379,7 @@ export async function getMessagesByConversation(
 	before?: string
 ): Promise<Message[]> {
 	let query = `
-		SELECT * FROM messages 
+		SELECT * FROM messages
 		WHERE conversation_id = ?
 	`;
 	const params: any[] = [conversationId];
@@ -345,7 +393,49 @@ export async function getMessagesByConversation(
 	params.push(limit);
 
 	const results = await db.getAllAsync<DBMessage>(query, params);
-	return results.map(dbMessageToMessage).reverse(); // Reverse to get chronological order
+	const messages = results.map(dbMessageToMessage).reverse(); // Reverse to get chronological order
+
+	// Load reactions for all messages
+	if (messages.length > 0) {
+		const messageIds = messages.map(m => m.id);
+		const reactionsByMessage: Record<string, Record<string, string[]>> = {};
+
+		// Batch reactions query to avoid SQLite variable limit
+		const BATCH_SIZE = 100;
+		for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
+			const batch = messageIds.slice(i, i + BATCH_SIZE);
+			const placeholders = batch.map(() => '?').join(',');
+
+			const reactionRows = await db.getAllAsync<{
+				message_id: string;
+				user_id: string;
+				emoji: string;
+			}>(
+				`SELECT message_id, user_id, emoji FROM message_reactions WHERE message_id IN (${placeholders})`,
+				batch
+			);
+
+			// Group reactions by message ID and emoji
+			for (const row of reactionRows) {
+				if (!reactionsByMessage[row.message_id]) {
+					reactionsByMessage[row.message_id] = {};
+				}
+				if (!reactionsByMessage[row.message_id][row.emoji]) {
+					reactionsByMessage[row.message_id][row.emoji] = [];
+				}
+				reactionsByMessage[row.message_id][row.emoji].push(row.user_id);
+			}
+		}
+
+		// Attach reactions to messages
+		messages.forEach(msg => {
+			if (reactionsByMessage[msg.id]) {
+				(msg as any).reactions = reactionsByMessage[msg.id];
+			}
+		});
+	}
+
+	return messages;
 }
 
 export async function getLocalOnlyMessages(
@@ -361,7 +451,88 @@ export async function deleteMessage(
 	db: SQLite.SQLiteDatabase,
 	messageId: string
 ): Promise<void> {
+	// CASCADE will handle deleting reactions automatically due to foreign key constraint
 	await db.runAsync('DELETE FROM messages WHERE id = ?', [messageId]);
+}
+
+export async function deleteConversation(
+	db: SQLite.SQLiteDatabase,
+	conversationId: string
+): Promise<void> {
+	// CASCADE will handle deleting messages and participants
+	await db.runAsync('DELETE FROM conversations WHERE id = ?', [conversationId]);
+}
+
+// ============================================================================
+// Reaction Queries
+// ============================================================================
+
+/**
+ * Add a reaction to a message in local database
+ */
+export async function addReaction(
+	db: SQLite.SQLiteDatabase,
+	messageId: string,
+	userId: string,
+	emoji: string
+): Promise<void> {
+	await db.runAsync(
+		`INSERT OR REPLACE INTO message_reactions (message_id, user_id, emoji, created_at)
+		VALUES (?, ?, ?, ?)`,
+		[messageId, userId, emoji, new Date().toISOString()]
+	);
+}
+
+/**
+ * Remove a reaction from a message in local database
+ */
+export async function removeReaction(
+	db: SQLite.SQLiteDatabase,
+	messageId: string,
+	userId: string,
+	emoji: string
+): Promise<void> {
+	await db.runAsync(
+		'DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
+		[messageId, userId, emoji]
+	);
+}
+
+/**
+ * Get all reactions for messages in a conversation
+ */
+export async function getReactionsByMessageIds(
+	db: SQLite.SQLiteDatabase,
+	messageIds: string[]
+): Promise<Record<string, Record<string, string[]>>> {
+	if (messageIds.length === 0) {
+		return {};
+	}
+
+	const placeholders = messageIds.map(() => '?').join(',');
+	const reactionRows = await db.getAllAsync<{
+		message_id: string;
+		user_id: string;
+		emoji: string;
+	}>(
+		`SELECT message_id, user_id, emoji FROM message_reactions WHERE message_id IN (${placeholders})`,
+		messageIds
+	);
+
+	const reactionsByMessage: Record<string, Record<string, string[]>> = {};
+
+	// Group reactions by message ID and emoji
+	for (const row of reactionRows) {
+		if (!reactionsByMessage[row.message_id]) {
+			reactionsByMessage[row.message_id] = {};
+		}
+		if (!reactionsByMessage[row.message_id][row.emoji]) {
+			reactionsByMessage[row.message_id][row.emoji] = [];
+		}
+		reactionsByMessage[row.message_id][row.emoji].push(row.user_id);
+	}
+
+	return reactionsByMessage;
 }
 
 // ============================================================================
@@ -390,6 +561,7 @@ export async function clearAllData(db: SQLite.SQLiteDatabase): Promise<void> {
 	// Delete in reverse order of foreign key dependencies
 	await db.runAsync('DELETE FROM user_presence');
 	await db.runAsync('DELETE FROM read_receipts');
+	await db.runAsync('DELETE FROM message_reactions');
 	await db.runAsync('DELETE FROM messages');
 	await db.runAsync('DELETE FROM conversation_participants');
 	await db.runAsync('DELETE FROM conversations');
@@ -480,6 +652,7 @@ function dbMessageToMessage(db: DBMessage): Message {
 		mediaUrl: db.media_url || undefined,
 		mediaType: db.media_type || undefined,
 		mediaSize: db.media_size || undefined,
+		linkPreview: db.link_preview ? JSON.parse(db.link_preview) : undefined,
 		clientId: db.client_id || undefined,
 		localOnly: db.local_only === 1
 	};
