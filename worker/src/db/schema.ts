@@ -212,15 +212,32 @@ export async function getConversationById(
 	if (!conv) return null;
 
 	const participantsResult = await db
-		.prepare('SELECT * FROM conversation_participants WHERE conversation_id = ?')
+		.prepare(`
+			SELECT cp.*, u.name, u.email, u.avatar_url 
+			FROM conversation_participants cp
+			LEFT JOIN users u ON cp.user_id = u.id
+			WHERE cp.conversation_id = ?
+		`)
 		.bind(conversationId)
-		.all<DBConversationParticipant>();
+		.all<DBConversationParticipant & { name: string | null; email: string | null; avatar_url: string | null }>();
 
 	const participants = (participantsResult.results || []).map(p => ({
 		conversationId: p.conversation_id,
 		userId: p.user_id,
 		joinedAt: p.joined_at,
-		role: p.role as 'admin' | 'member'
+		role: p.role as 'admin' | 'member',
+		// Include user data for display
+		name: p.name || (p.email ? p.email.split('@')[0] : undefined),
+		avatarUrl: p.avatar_url || undefined,
+		user: p.name || p.email ? {
+			id: p.user_id,
+			clerkId: p.user_id,
+			email: p.email || `${p.user_id}@unknown.local`,
+			name: p.name || undefined,
+			avatarUrl: p.avatar_url || undefined,
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+		} : undefined
 	}));
 
 	return {
@@ -255,7 +272,7 @@ export async function getConversationsByUserId(
 			.prepare(`
 				SELECT cp.*, u.name, u.email, u.avatar_url 
 				FROM conversation_participants cp
-				LEFT JOIN users u ON cp.user_id = u.clerk_id
+				LEFT JOIN users u ON cp.user_id = u.id
 				WHERE cp.conversation_id = ?
 			`)
 			.bind(conv.id)

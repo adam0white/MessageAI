@@ -42,7 +42,6 @@ export async function sendMessageNotification(
 	senderName?: string
 ): Promise<void> {
 	if (tokens.length === 0) {
-		console.log('No push tokens to send to');
 		return;
 	}
 
@@ -73,7 +72,6 @@ export async function sendReadReceiptNotification(
 	readerName?: string
 ): Promise<void> {
 	if (tokens.length === 0) {
-		console.log('No push tokens to send to');
 		return;
 	}
 
@@ -121,8 +119,6 @@ async function sendPushNotifications(messages: ExpoPushMessage[]): Promise<void>
 		result.data.forEach((ticket, index) => {
 			if (ticket.status === 'error') {
 				console.error(`❌ Push notification failed for token ${messages[index].to}:`, ticket.message, ticket.details);
-			} else {
-				console.log(`✅ Push notification sent successfully (ID: ${ticket.id})`);
 			}
 		});
 	} catch (error) {

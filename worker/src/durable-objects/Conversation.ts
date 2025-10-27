@@ -117,6 +117,21 @@ export class Conversation extends DurableObject<Env> {
 			)
 		`);
 
+		await this.ctx.storage.sql.exec(`
+			CREATE TABLE IF NOT EXISTS message_reactions (
+				message_id TEXT NOT NULL,
+				user_id TEXT NOT NULL,
+				emoji TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				PRIMARY KEY (message_id, user_id, emoji)
+			)
+		`);
+
+		await this.ctx.storage.sql.exec(`
+			CREATE INDEX IF NOT EXISTS idx_reactions_message
+			ON message_reactions(message_id)
+		`);
+
 		// Agent state table for multi-step workflows
 		await this.ctx.storage.sql.exec(`
 			CREATE TABLE IF NOT EXISTS agent_state (
@@ -2191,6 +2206,14 @@ Generate realistic venue names (no fake addresses).`;
 						await this.handleTyping(ws, session, data);
 						break;
 					
+					case 'add_reaction':
+						await this.handleAddReaction(ws, session, data);
+						break;
+					
+					case 'remove_reaction':
+						await this.handleRemoveReaction(ws, session, data);
+						break;
+					
 				default:
 					console.warn(`Unknown message type: ${(data as any).type}`);
 					try {
@@ -2245,6 +2268,7 @@ Generate realistic venue names (no fake addresses).`;
 				mediaUrl: data.mediaUrl,
 				createdAt: now,
 				updatedAt: now,
+				clientId: data.clientId, // Include clientId for deduplication
 			};
 
 			// Save to SQLite storage
@@ -2451,6 +2475,57 @@ Generate realistic venue names (no fake addresses).`;
 	}
 
 	/**
+	 * Handle add reaction
+	 */
+	private async handleAddReaction(ws: WebSocket, session: Session, data: ClientMessage & { type: 'add_reaction' }): Promise<void> {
+		const now = new Date().toISOString();
+		
+		// Save reaction to database
+		await this.ctx.storage.sql.exec(
+			`INSERT OR REPLACE INTO message_reactions (message_id, user_id, emoji, created_at)
+			VALUES (?, ?, ?, ?)`,
+			data.messageId,
+			data.userId,
+			data.emoji,
+			now
+		);
+
+		// Broadcast reaction to all participants
+		const reactionEvent: ServerMessage = {
+			type: 'reaction',
+			messageId: data.messageId,
+			userId: data.userId,
+			emoji: data.emoji,
+			action: 'add',
+		};
+		this.broadcast(reactionEvent);
+	}
+
+	/**
+	 * Handle remove reaction
+	 */
+	private async handleRemoveReaction(ws: WebSocket, session: Session, data: ClientMessage & { type: 'remove_reaction' }): Promise<void> {
+		// Remove reaction from database
+		await this.ctx.storage.sql.exec(
+			`DELETE FROM message_reactions 
+			WHERE message_id = ? AND user_id = ? AND emoji = ?`,
+			data.messageId,
+			data.userId,
+			data.emoji
+		);
+
+		// Broadcast reaction removal to all participants
+		const reactionEvent: ServerMessage = {
+			type: 'reaction',
+			messageId: data.messageId,
+			userId: data.userId,
+			emoji: data.emoji,
+			action: 'remove',
+		};
+		this.broadcast(reactionEvent);
+	}
+
+	/**
 	 * Handle WebSocket close
 	 */
 	async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
@@ -2590,6 +2665,42 @@ Generate realistic venue names (no fake addresses).`;
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
 		}));
+
+		// Fetch reactions for all messages (batch to avoid SQLite variable limit)
+		if (messages.length > 0) {
+			const messageIds = messages.map(m => m.id);
+			const reactionsByMessage: Record<string, Record<string, string[]>> = {};
+			
+			// SQLite has a limit of ~999 variables, batch in groups of 100
+			const BATCH_SIZE = 100;
+			for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
+				const batch = messageIds.slice(i, i + BATCH_SIZE);
+				const placeholders = batch.map(() => '?').join(',');
+				const reactionsCursor = this.ctx.storage.sql.exec(
+					`SELECT message_id, user_id, emoji FROM message_reactions WHERE message_id IN (${placeholders})`,
+					...batch
+				);
+				const reactionRows = await reactionsCursor.toArray() as unknown as Array<{message_id: string, user_id: string, emoji: string}>;
+
+				// Group reactions by message ID and emoji
+				for (const row of reactionRows) {
+					if (!reactionsByMessage[row.message_id]) {
+						reactionsByMessage[row.message_id] = {};
+					}
+					if (!reactionsByMessage[row.message_id][row.emoji]) {
+						reactionsByMessage[row.message_id][row.emoji] = [];
+					}
+					reactionsByMessage[row.message_id][row.emoji].push(row.user_id);
+				}
+			}
+
+			// Add reactions to messages
+			messages.forEach(msg => {
+				if (reactionsByMessage[msg.id]) {
+					msg.reactions = reactionsByMessage[msg.id];
+				}
+			});
+		}
 
 		return messages.reverse(); // Return in chronological order
 	}

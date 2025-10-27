@@ -16,6 +16,7 @@ import { View, Text, ActivityIndicator } from 'react-native';
 import { DB_NAME } from '../lib/db/schema';
 import { config } from '../lib/config';
 import { storage } from '../lib/platform/storage';
+import { ThemeProvider } from '../lib/contexts/ThemeContext';
 import React from 'react';
 
 // Create a client
@@ -49,6 +50,31 @@ export default function RootLayout() {
 		if (typeof window !== 'undefined' && navigator.userAgent?.includes('Firefox')) {
 			console.warn('⚠️ Firefox has limited support for IndexedDB/OPFS. Consider using Chrome or Safari for best experience.');
 		}
+		
+		// Suppress common benign errors
+		const originalErrorHandler = global.ErrorUtils?.getGlobalHandler();
+		const customErrorHandler = (error: Error, isFatal: boolean) => {
+			// Suppress "unable to activate keep awake" error (happens when screen is locked)
+			if (error?.message?.toLowerCase().includes('unable to activate keep awake')) {
+				return;
+			}
+			
+			// Call original error handler for other errors
+			if (originalErrorHandler) {
+				originalErrorHandler(error, isFatal);
+			}
+		};
+		
+		if (global.ErrorUtils) {
+			global.ErrorUtils.setGlobalHandler(customErrorHandler);
+		}
+		
+		return () => {
+			// Restore original handler on unmount
+			if (originalErrorHandler && global.ErrorUtils) {
+				global.ErrorUtils.setGlobalHandler(originalErrorHandler);
+			}
+		};
 	}, []);
 
 	if (!CLERK_PUBLISHABLE_KEY) {
@@ -72,7 +98,9 @@ export default function RootLayout() {
 			<ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
 				<ClerkLoaded>
 					<QueryClientProvider client={queryClient}>
-						<Slot />
+						<ThemeProvider>
+							<Slot />
+						</ThemeProvider>
 					</QueryClientProvider>
 				</ClerkLoaded>
 			</ClerkProvider>

@@ -37,6 +37,26 @@ export function useConversations() {
 						// Backend returns conversations that match ConversationPreview shape
 						const serverConversations = data.conversations as ConversationPreview[];
 
+						// Sync participant user data to local database for name display
+						for (const conv of serverConversations) {
+							for (const participant of conv.participants) {
+								if (participant.id && (participant.name || participant.avatarUrl)) {
+									// Upsert participant user data to local DB
+									await upsertUser(db, {
+										id: participant.id,
+										clerkId: participant.id, // We don't have clerk_id here, use id as fallback
+										email: `${participant.id}@unknown.local`, // Placeholder
+										name: participant.name,
+										avatarUrl: participant.avatarUrl,
+										createdAt: new Date().toISOString(),
+										updatedAt: new Date().toISOString(),
+									}).catch(() => {
+										// Silently fail if user already exists or other error
+									});
+								}
+							}
+						}
+
 						// Return server data directly (includes fresh lastMessage previews)
 						return serverConversations.sort((a, b) => {
 							const aTime = a.lastMessage?.createdAt || a.id;
@@ -146,6 +166,23 @@ export function useConversation(conversationId: string) {
 
 			const data = await response.json();
 			const conversation: Conversation = data.conversation;
+
+			// Sync participant user data to local DB (for name display)
+			for (const participant of conversation.participants) {
+				if (participant.userId && (participant.user?.name || participant.user?.email)) {
+					await upsertUser(db, {
+						id: participant.userId,
+						clerkId: participant.userId,
+						email: participant.user.email,
+						name: participant.user.name,
+						avatarUrl: participant.user?.avatarUrl,
+						createdAt: participant.user?.createdAt || new Date().toISOString(),
+						updatedAt: participant.user?.updatedAt || new Date().toISOString(),
+					}).catch(() => {
+						// Silently fail
+					});
+				}
+			}
 
 			// Sync to local database
 			await upsertConversation(db, conversation);

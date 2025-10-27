@@ -174,8 +174,12 @@ export function useMessages(conversationId: string) {
 					
 					if (incomingMessage.conversationId === conversationId) {
 						// Check if message already exists (prevent duplicates)
+						// Check both by server ID and by clientId (for messages we just sent)
 						const exists = queryClient.getQueryData<Message[]>(['messages', conversationId])
-							?.some(msg => msg.id === incomingMessage.id || msg.clientId === incomingMessage.id);
+							?.some(msg => 
+								msg.id === incomingMessage.id || 
+								(incomingMessage.clientId && msg.clientId === incomingMessage.clientId)
+							);
 						
 						if (!exists) {
 							await insertMessage(db, incomingMessage).catch(() => {});
@@ -185,6 +189,36 @@ export function useMessages(conversationId: string) {
 							});
 						}
 					}
+				} else if (message.type === 'reaction') {
+					// Handle reaction add/remove
+					queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
+						return old.map(msg => {
+							if (msg.id === message.messageId) {
+								const reactions = { ...(msg.reactions || {}) };
+								
+								if (message.action === 'add') {
+									// Add user to emoji reactions
+									if (!reactions[message.emoji]) {
+										reactions[message.emoji] = [];
+									}
+									if (!reactions[message.emoji].includes(message.userId)) {
+										reactions[message.emoji] = [...reactions[message.emoji], message.userId];
+									}
+								} else {
+									// Remove user from emoji reactions
+									if (reactions[message.emoji]) {
+										reactions[message.emoji] = reactions[message.emoji].filter(id => id !== message.userId);
+										if (reactions[message.emoji].length === 0) {
+											delete reactions[message.emoji];
+										}
+									}
+								}
+								
+								return { ...msg, reactions: Object.keys(reactions).length > 0 ? reactions : undefined };
+							}
+							return msg;
+						});
+					});
 				} else if (message.type === 'history_response') {
 					// Get current messages to check for duplicates and status updates
 					const currentMessages = queryClient.getQueryData<Message[]>(['messages', conversationId]) || [];

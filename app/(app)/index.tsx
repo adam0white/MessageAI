@@ -7,6 +7,7 @@ import { useConversations, useCreateConversation } from '../../hooks/useConversa
 import type { ConversationPreview } from '../../lib/api/types';
 import { useAuthStore } from '../../lib/stores/auth';
 import { clearAllData } from '../../lib/db/queries';
+import { useTheme } from '../../lib/contexts/ThemeContext';
 
 export default function ConversationListScreen() {
 	const { signOut } = useAuth();
@@ -14,6 +15,7 @@ export default function ConversationListScreen() {
 	const router = useRouter();
 	const db = useSQLiteContext();
 	const { userId } = useAuthStore();
+	const { colors } = useTheme();
 	const { conversations, isLoading, refetch } = useConversations();
 	const { createConversationAsync, isCreating } = useCreateConversation();
 	const [showUserIdModal, setShowUserIdModal] = useState(false);
@@ -76,6 +78,23 @@ export default function ConversationListScreen() {
 		return 'Unknown';
 	}
 
+	function getInitials(name: string): string {
+		const parts = name.trim().split(' ');
+		if (parts.length >= 2) {
+			return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+		}
+		return name.substring(0, 2).toUpperCase();
+	}
+
+	function getAvatarColor(name: string): string {
+		const colors = [
+			'#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', 
+			'#98D8C8', '#6C5CE7', '#A29BFE', '#FD79A8',
+		];
+		const hash = name.split('').reduce((acc, char) => char.charCodeAt(0) + ((acc << 5) - acc), 0);
+		return colors[Math.abs(hash) % colors.length];
+	}
+
 	async function handleNewChat() {
 		// Show modal to choose between self-chat or enter user ID
 		setShowUserIdModal(true);
@@ -119,6 +138,8 @@ export default function ConversationListScreen() {
 		}
 	}
 
+	const styles = getStyles(colors);
+
 	if (isLoading) {
 		return (
 			<View style={[styles.container, styles.centered]}>
@@ -155,9 +176,6 @@ export default function ConversationListScreen() {
 							Welcome, {user?.firstName || user?.emailAddresses[0]?.emailAddress.split('@')[0]}
 						</Text>
 					<View style={styles.headerButtons}>
-						<TouchableOpacity onPress={() => router.push('/ai-assistant')} style={styles.aiButton}>
-							<Text style={styles.aiButtonText}>🤖 AI</Text>
-						</TouchableOpacity>
 						<TouchableOpacity onPress={() => router.push('/profile')} style={styles.profileButton}>
 							<Text style={styles.profileButtonText}>Profile</Text>
 						</TouchableOpacity>
@@ -184,11 +202,12 @@ export default function ConversationListScreen() {
 						style={styles.conversationItem}
 						onPress={() => handleConversationPress(item.id)}
 					>
-						<View style={styles.avatar}>
-							<Text style={styles.avatarText}>
-								{conversationName.charAt(0).toUpperCase()}
-							</Text>
-						</View>
+				{/* Avatar will use first letter as fallback */}
+				<View style={[styles.avatar, { backgroundColor: getAvatarColor(conversationName) }]}>
+					<Text style={styles.avatarText}>
+						{getInitials(conversationName)}
+					</Text>
+				</View>
 						<View style={styles.conversationContent}>
 							<View style={styles.conversationHeader}>
 								<Text style={styles.conversationName}>{conversationName}</Text>
@@ -238,27 +257,6 @@ export default function ConversationListScreen() {
 					onPress={(e) => e.stopPropagation()}
 				>
 					<Text style={styles.modalTitle}>New Conversation</Text>
-					
-					<View style={styles.quickActions}>
-						<TouchableOpacity 
-							style={[styles.quickActionButton, styles.primaryButton]}
-							onPress={() => {
-								setParticipantIds('');
-								setConversationName('Notes');
-								createConversation();
-							}}
-							disabled={isCreating}
-						>
-							<Text style={styles.quickActionEmoji}>📝</Text>
-							<Text style={styles.quickActionText}>Self Chat</Text>
-						</TouchableOpacity>
-					</View>
-					
-					<View style={styles.divider}>
-						<View style={styles.dividerLine} />
-						<Text style={styles.dividerText}>or create custom</Text>
-						<View style={styles.dividerLine} />
-					</View>
 					
 					<Text style={styles.modalLabel}>Your User ID (share with others):</Text>
 					<View style={styles.userIdContainer}>
@@ -319,10 +317,10 @@ export default function ConversationListScreen() {
 	);
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any) => StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: '#fff',
+		backgroundColor: colors.background,
 	},
 	centered: {
 		justifyContent: 'center',
@@ -342,7 +340,7 @@ const styles = StyleSheet.create({
 	welcomeText: {
 		fontSize: 16,
 		fontWeight: '500',
-		color: '#000',
+		color: colors.text,
 		flex: 1,
 	},
 	headerButtons: {
@@ -409,10 +407,11 @@ const styles = StyleSheet.create({
 	conversationName: {
 		fontSize: 16,
 		fontWeight: '600',
+		color: colors.text,
 	},
 	timestamp: {
 		fontSize: 12,
-		color: '#999',
+		color: colors.textSecondary,
 	},
 	messageRow: {
 		flexDirection: 'row',
@@ -421,7 +420,7 @@ const styles = StyleSheet.create({
 	},
 	lastMessage: {
 		fontSize: 14,
-		color: '#666',
+		color: colors.textSecondary,
 		flex: 1,
 	},
 	unreadBadge: {
@@ -448,26 +447,26 @@ const styles = StyleSheet.create({
 	emptyText: {
 		fontSize: 18,
 		fontWeight: '600',
-		color: '#333',
+		color: colors.text,
 		marginBottom: 8,
 	},
 	emptySubtext: {
 		fontSize: 14,
-		color: '#666',
+		color: colors.textSecondary,
 	},
 	newChatButton: {
 		marginRight: 12,
-		paddingHorizontal: 12,
-		paddingVertical: 6,
-		backgroundColor: '#007AFF',
-		borderRadius: 6,
-		minWidth: 60,
+		paddingHorizontal: Platform.OS === 'ios' ? 8 : 12,
+		paddingVertical: Platform.OS === 'ios' ? 0 : 6,
+		backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#007AFF',
+		borderRadius: Platform.OS === 'ios' ? 0 : 6,
+		minWidth: Platform.OS === 'ios' ? 0 : 60,
 		alignItems: 'center',
 		justifyContent: 'center',
 	},
 	newChatButtonText: {
-		color: '#fff',
-		fontSize: 14,
+		color: Platform.OS === 'ios' ? '#007AFF' : '#fff',
+		fontSize: Platform.OS === 'ios' ? 17 : 14,
 		fontWeight: '600',
 	},
 	modalOverlay: {
@@ -478,7 +477,7 @@ const styles = StyleSheet.create({
 		padding: 20,
 	},
 	modalContent: {
-		backgroundColor: '#fff',
+		backgroundColor: colors.surface,
 		borderRadius: 12,
 		padding: 20,
 		width: '100%',
@@ -489,13 +488,14 @@ const styles = StyleSheet.create({
 		fontWeight: 'bold',
 		marginBottom: 20,
 		textAlign: 'center',
+		color: colors.text,
 	},
 	modalLabel: {
 		fontSize: 14,
 		fontWeight: '600',
 		marginBottom: 8,
 		marginTop: 12,
-		color: '#333',
+		color: colors.text,
 	},
 	quickActions: {
 		marginBottom: 16,
@@ -528,7 +528,7 @@ const styles = StyleSheet.create({
 	},
 	dividerText: {
 		fontSize: 12,
-		color: '#65676b',
+		color: colors.textSecondary,
 		marginHorizontal: 12,
 	},
 	userIdContainer: {
@@ -550,12 +550,14 @@ const styles = StyleSheet.create({
 	},
 	modalInput: {
 		borderWidth: 1,
-		borderColor: '#e4e6eb',
+		borderColor: colors.border,
 		borderRadius: 8,
 		padding: 12,
 		fontSize: 14,
 		marginBottom: 20,
 		fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+		color: colors.text,
+		backgroundColor: colors.inputBackground,
 	},
 	modalButtons: {
 		flexDirection: 'row',

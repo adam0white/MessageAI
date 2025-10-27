@@ -44,6 +44,9 @@ export interface Message {
 	mediaType?: string;
 	mediaSize?: number;
 	
+	// Reactions (grouped by emoji)
+	reactions?: Record<string, string[]>; // emoji -> array of userIds
+	
 	// Client-side only fields (not persisted on server)
 	clientId?: string; // For optimistic updates
 	localOnly?: boolean; // For offline queue
@@ -53,6 +56,13 @@ export interface ReadReceipt {
 	messageId: string;
 	userId: string;
 	readAt: string;
+}
+
+export interface MessageReaction {
+	messageId: string;
+	userId: string;
+	emoji: string;
+	createdAt: string;
 }
 
 // ============================================================================
@@ -114,7 +124,9 @@ export type ClientMessage =
 	| SendMessage
 	| MarkReadMessage
 	| GetHistoryMessage
-	| TypingMessage;
+	| TypingMessage
+	| AddReactionMessage
+	| RemoveReactionMessage;
 
 export interface SubscribeMessage {
 	type: 'subscribe';
@@ -152,6 +164,20 @@ export interface TypingMessage {
 	isTyping: boolean;
 }
 
+export interface AddReactionMessage {
+	type: 'add_reaction';
+	messageId: string;
+	emoji: string;
+	userId: string;
+}
+
+export interface RemoveReactionMessage {
+	type: 'remove_reaction';
+	messageId: string;
+	emoji: string;
+	userId: string;
+}
+
 /**
  * Server -> Client Messages
  */
@@ -162,6 +188,7 @@ export type ServerMessage =
 	| MessageReadEvent
 	| PresenceUpdateEvent
 	| TypingEvent
+	| ReactionEvent
 	| HistoryResponseEvent
 	| ErrorEvent
 	| AckEvent;
@@ -204,6 +231,14 @@ export interface TypingEvent {
 	conversationId: string;
 	userId: string;
 	isTyping: boolean;
+}
+
+export interface ReactionEvent {
+	type: 'reaction';
+	messageId: string;
+	userId: string;
+	emoji: string;
+	action: 'add' | 'remove';
 }
 
 export interface HistoryResponseEvent {

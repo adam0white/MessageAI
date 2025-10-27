@@ -1,7 +1,7 @@
 # Progress: MessageAI
 
-**Updated**: 2025-10-25
-**Status**: 🟢 Phase 13.0 COMPLETE ✅ - Performance Optimization Complete!
+**Updated**: 2025-10-26
+**Status**: 🟢 Phase 15.0 COMPLETE ✅ - Reactions, Avatars, Dark Mode, Polish!
 
 ## Phase 1.0: Foundation & Authentication ✅ (9/9 Complete)
 - ✅ Expo SDK 54 project initialized
@@ -173,6 +173,50 @@
 - 📊 **100% elimination** of cache invalidations
 - 📊 **~97% reduction** in database queries
 - 📊 **~95% reduction** in component re-renders
+
+## Phase 15.0: Reactions, Avatars & Polish ✅ (Complete)
+
+**Message Reactions:**
+- ✅ Durable Object SQLite table: message_reactions (message_id, user_id, emoji)
+- ✅ WebSocket protocol: add_reaction, remove_reaction events
+- ✅ Long-press emoji picker (6 emojis: 👍❤️😂😮😢🎉)
+- ✅ Real-time reaction sync with counts
+- ✅ Active state highlighting (blue border for user's reactions)
+- ✅ Batched SQL queries (100 IDs/batch to avoid variable limits)
+
+**Names & User Sync:**
+- ✅ Fixed critical backend JOIN bug (clerk_id → id)
+- ✅ Direct REST endpoint: POST /api/users/sync (no webhook dependency)
+- ✅ Auto-sync on app load and profile updates
+- ✅ Names visible: conversation list, group chats, member list, notifications
+
+**Avatar System:**
+- ✅ Initials-based avatars (2 letters from name)
+- ✅ Consistent color hashing (12-color palette)
+- ✅ Integrated in conversation list
+
+**Dark Mode:**
+- ✅ Theme context with light/dark/auto modes
+- ✅ Profile screen toggle (☀️ Light / 🌙 Dark / ⚙️ Auto)
+- ✅ Persistent preference via platform storage
+- ✅ Applied to: chat screen, profile, modals, AI panel
+
+**Polish & Animations:**
+- ✅ Haptic feedback: medium (send/long-press), light (reactions)
+- ✅ Message appear animations (slide + fade)
+- ✅ Reaction pop animations (spring effect)
+- ✅ Typing indicator with bouncing dots
+- ✅ Smooth 60fps maintained
+
+**Bug Fixes (Final Polish):**
+- ✅ Fixed typing indicator scope error (iOS crash)
+- ✅ Fixed Android input text visibility (explicit black)
+- ✅ Fixed message duplication (clientId in new_message broadcast)
+- ✅ Fixed FlatList status updates (extraData prop)
+- ✅ Fixed dark mode colors (member list, AI panel, buttons)
+- ✅ Fixed iOS header styling (transparent backgrounds)
+- ✅ Fixed Android keyboard white bar (removed height behavior)
+- ✅ Suppressed benign keep awake errors
 
 ## MVP Progress (11/11) - COMPLETE ✅
 - ✅ User authentication (Clerk) - **Validated on real devices**

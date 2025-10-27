@@ -16,6 +16,7 @@ import {
 	handleRegisterPushToken, 
 	handleDeletePushToken 
 } from './handlers/push-tokens';
+import { handleSyncUserProfile, handleGetUserProfile } from './handlers/users';
 import { handleAiChat } from './handlers/ai';
 import { handleMediaUpload, handleMediaGet } from './handlers/media';
 import { handleStartCall, handleEndCall } from './handlers/calls';
@@ -221,6 +222,21 @@ export default {
 			const filename = url.pathname.substring('/media/'.length);
 			if (filename) {
 				return handleMediaGet(filename, env);
+			}
+		}
+
+		// User profile sync endpoint (no webhook dependency)
+		if (url.pathname === '/api/users/sync' && request.method === 'POST') {
+			const response = await handleSyncUserProfile(request, env);
+			return addCorsHeaders(response);
+		}
+
+		// Get user profile endpoint
+		if (url.pathname.startsWith('/api/users/') && request.method === 'GET') {
+			const clerkId = url.pathname.split('/')[3];
+			if (clerkId) {
+				const response = await handleGetUserProfile(request, env, clerkId);
+				return addCorsHeaders(response);
 			}
 		}
 

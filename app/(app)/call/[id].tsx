@@ -1,6 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Platform, ActivityIndicator, BackHandler } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { config } from '../../../lib/config';
+import { useAuth } from '@clerk/clerk-expo';
+
+const WORKER_URL = config.workerUrl;
 
 // Web fallback component
 function WebFallback() {
@@ -57,11 +61,16 @@ function NativeCallScreen({ authToken, conversationId }: { authToken: string; co
 		};
 	}, [meeting]);
 	
+	// Handle leave call navigation
+	const handleLeaveCall = () => {
+		router.back();
+	};
+
 	// Handle Android back button
 	useEffect(() => {
 		if (Platform.OS === 'android') {
 			const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-				router.back();
+				handleLeaveCall();
 				return true;
 			});
 			
@@ -79,6 +88,7 @@ function NativeCallScreen({ authToken, conversationId }: { authToken: string; co
 						meeting={meeting}
 						showSetupScreen={true}
 						iOSScreenshareEnabled={true}
+						onLeave={handleLeaveCall}
 					/>
 				)}
 			</RtkUIProvider>
@@ -89,19 +99,61 @@ function NativeCallScreen({ authToken, conversationId }: { authToken: string; co
 export default function CallScreen() {
 	const { authToken, id } = useLocalSearchParams();
 	const conversationId = id as string;
+	const [callTitle, setCallTitle] = useState('Video Call');
+	const { getToken } = useAuth();
+	
+	// Fetch conversation name for better title
+	useEffect(() => {
+		const fetchConversationName = async () => {
+			try {
+				const token = await getToken();
+				const response = await fetch(`${WORKER_URL}/api/conversations/${conversationId}`, {
+					headers: { 'Authorization': `Bearer ${token}` }
+				});
+				if (response.ok) {
+					const data = await response.json();
+					const conv = data.conversation;
+					if (conv.name) {
+						setCallTitle(conv.name);
+					} else if (conv.type === 'group') {
+						setCallTitle('Group Call');
+					}
+				}
+			} catch (error) {
+				// Keep default title
+			}
+		};
+		
+		if (conversationId) {
+			fetchConversationName();
+		}
+	}, [conversationId]);
 	
 	if (Platform.OS === 'web') {
-		return <WebFallback />;
+		return (
+			<>
+				<Stack.Screen options={{ title: callTitle }} />
+				<WebFallback />
+			</>
+		);
 	}
 	
 	if (!authToken || !conversationId) {
 		return (
-			<View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-				<ActivityIndicator size="large" />
-			</View>
+			<>
+				<Stack.Screen options={{ title: callTitle }} />
+				<View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+					<ActivityIndicator size="large" />
+				</View>
+			</>
 		);
 	}
 	
-	return <NativeCallScreen authToken={authToken as string} conversationId={conversationId} />;
+	return (
+		<>
+			<Stack.Screen options={{ title: callTitle, headerShown: false }} />
+			<NativeCallScreen authToken={authToken as string} conversationId={conversationId} />
+		</>
+	);
 }
 

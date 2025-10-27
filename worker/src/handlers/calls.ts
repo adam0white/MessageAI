@@ -21,8 +21,7 @@ export async function handleStartCall(
 		const participants = body.participants || [];
 		const currentUserId = body.userId;
 		
-		console.log('Start call request for conversation:', conversationId);
-		console.log('Caller:', currentUserId);
+		// Start call for conversation
 		
 		// Create Basic Auth header: base64(orgId:apiKey)
 		const authString = `${env.REALTIMEKIT_ORG_ID}:${env.REALTIMEKIT_API_KEY}`;
@@ -40,11 +39,9 @@ export async function handleStartCall(
 		
 		if (existingCall.meetingId) {
 			// Join existing meeting
-			console.log('Joining existing meeting:', existingCall.meetingId);
 			meetingId = existingCall.meetingId;
 		} else {
 			// Create new meeting
-			console.log('Creating new meeting for conversation:', conversationId);
 			const meetingRes = await fetch('https://api.realtime.cloudflare.com/v2/meetings', {
 				method: 'POST',
 				headers: {
@@ -66,7 +63,6 @@ export async function handleStartCall(
 			
 			const meetingResponse = await meetingRes.json() as { success: boolean; data: { id: string } };
 			meetingId = meetingResponse.data.id;
-			console.log('Meeting created:', meetingId);
 			
 			// Store meeting ID in Conversation DO
 			await doStub.fetch('https://internal/active-call', {
@@ -83,7 +79,7 @@ export async function handleStartCall(
 			}, { status: 400 });
 		}
 		
-		console.log('Adding current user to meeting:', currentUserId);
+		// Add current user to meeting
 		const res = await fetch(
 			`https://api.realtime.cloudflare.com/v2/meetings/${meetingId}/participants`,
 			{
@@ -109,8 +105,6 @@ export async function handleStartCall(
 		}
 		
 		const participantResponse = await res.json() as { success: boolean; data: { token: string } };
-		
-		console.log('User joined call successfully');
 		
 		return Response.json({
 			meetingId,
@@ -139,8 +133,6 @@ export async function handleEndCall(
 		await doStub.fetch('https://internal/active-call', {
 			method: 'DELETE',
 		});
-		
-		console.log('Call ended for conversation:', conversationId);
 		
 		return Response.json({ success: true });
 	} catch (error) {

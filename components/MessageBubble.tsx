@@ -1,22 +1,91 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Modal, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Modal, Dimensions, Animated } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useSQLiteContext } from 'expo-sqlite';
 import type { Message, User } from '../lib/api/types';
 import { useAuthStore } from '../lib/stores/auth';
 import { getUserById } from '../lib/db/queries';
+import { wsClient } from '../lib/api/websocket';
 
 interface MessageBubbleProps {
 	message: Message;
 	isGroupChat?: boolean; // Whether this is a group conversation
 	showSenderName?: boolean; // Explicitly show sender name (for groups)
+	conversationId?: string; // For sending reactions
 }
 
-export const MessageBubble = React.memo(function MessageBubble({ message, isGroupChat = false, showSenderName = false }: MessageBubbleProps) {
+// Quick emoji picker for reactions
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
+
+// Animated Reaction Bubble Component
+const ReactionBubble = React.memo(function ReactionBubble({ 
+	emoji, 
+	count, 
+	isUserReaction, 
+	onPress 
+}: { 
+	emoji: string; 
+	count: number; 
+	isUserReaction: boolean; 
+	onPress: () => void;
+}) {
+	const scaleAnim = React.useRef(new Animated.Value(0)).current;
+
+	React.useEffect(() => {
+		Animated.spring(scaleAnim, {
+			toValue: 1,
+			friction: 3,
+			tension: 100,
+			useNativeDriver: true,
+		}).start();
+	}, []);
+
+	return (
+		<Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+			<TouchableOpacity
+				style={[
+					styles.reactionBubble,
+					isUserReaction && styles.reactionBubbleActive
+				]}
+				onPress={onPress}
+			>
+				<Text style={styles.reactionEmoji}>{emoji}</Text>
+				<Text style={[
+					styles.reactionCount,
+					isUserReaction && styles.reactionCountActive
+				]}>
+					{count}
+				</Text>
+			</TouchableOpacity>
+		</Animated.View>
+	);
+});
+
+export const MessageBubble = React.memo(function MessageBubble({ message, isGroupChat = false, showSenderName = false, conversationId }: MessageBubbleProps) {
 	const db = useSQLiteContext();
 	const { userId } = useAuthStore();
 	const isOwnMessage = message.senderId === userId;
 	const [senderName, setSenderName] = useState<string | null>(null);
 	const [showLightbox, setShowLightbox] = useState(false);
+	const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+	const [fadeAnim] = useState(new Animated.Value(0));
+	const [slideAnim] = useState(new Animated.Value(20));
+
+	// Entrance animation
+	useEffect(() => {
+		Animated.parallel([
+			Animated.timing(fadeAnim, {
+				toValue: 1,
+				duration: 200,
+				useNativeDriver: true,
+			}),
+			Animated.timing(slideAnim, {
+				toValue: 0,
+				duration: 200,
+				useNativeDriver: true,
+			}),
+		]).start();
+	}, []);
 
 	// Fetch sender info for group chats
 	useEffect(() => {
@@ -64,10 +133,33 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 
 	const statusIndicator = getStatusIndicator();
 
+	// Handle reaction toggle
+	const handleReaction = (emoji: string) => {
+		if (!userId || !conversationId) return;
+		
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+		
+		// Check if user already reacted with this emoji
+		const userReacted = message.reactions?.[emoji]?.includes(userId);
+		
+		wsClient.send({
+			type: userReacted ? 'remove_reaction' : 'add_reaction',
+			messageId: message.id,
+			emoji,
+			userId,
+		});
+		
+		setShowEmojiPicker(false);
+	};
+
 	return (
-		<View style={[
+		<Animated.View style={[
 			styles.container,
-			isOwnMessage ? styles.ownMessage : styles.otherMessage
+			isOwnMessage ? styles.ownMessage : styles.otherMessage,
+			{
+				opacity: fadeAnim,
+				transform: [{ translateY: slideAnim }],
+			},
 		]}>
 			<View style={styles.messageWrapper}>
 				{/* Show sender name for group chats (only for others' messages) */}
@@ -75,11 +167,20 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 					<Text style={styles.senderName}>{senderName}</Text>
 				)}
 				
-				<View style={[
-					styles.bubble,
-					isOwnMessage ? styles.ownBubble : styles.otherBubble,
-					message.type === 'image' && styles.imageBubble
-				]}>
+				<TouchableOpacity
+					onLongPress={() => {
+						if (conversationId) {
+							Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+							setShowEmojiPicker(true);
+						}
+					}}
+					activeOpacity={0.9}
+					style={[
+						styles.bubble,
+						isOwnMessage ? styles.ownBubble : styles.otherBubble,
+						message.type === 'image' && styles.imageBubble
+					]}
+				>
 					{message.type === 'image' && message.mediaUrl ? (
 						<TouchableOpacity onPress={() => setShowLightbox(true)}>
 							<Image 
@@ -118,8 +219,52 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 							</Text>
 						)}
 					</View>
-				</View>
+				</TouchableOpacity>
+
+				{/* Reactions */}
+				{message.reactions && Object.keys(message.reactions).length > 0 && (
+					<View style={styles.reactionsContainer}>
+						{Object.entries(message.reactions).map(([emoji, userIds]) => {
+							const isUserReaction = userId && userIds.includes(userId);
+							return (
+								<ReactionBubble
+									key={emoji}
+									emoji={emoji}
+									count={userIds.length}
+									isUserReaction={isUserReaction}
+									onPress={() => handleReaction(emoji)}
+								/>
+							);
+						})}
+					</View>
+				)}
 			</View>
+
+			{/* Emoji Picker Modal */}
+			<Modal
+				visible={showEmojiPicker}
+				transparent
+				animationType="fade"
+				onRequestClose={() => setShowEmojiPicker(false)}
+			>
+				<TouchableOpacity
+					style={styles.emojiPickerOverlay}
+					activeOpacity={1}
+					onPress={() => setShowEmojiPicker(false)}
+				>
+					<View style={styles.emojiPickerContainer}>
+						{QUICK_EMOJIS.map(emoji => (
+							<TouchableOpacity
+								key={emoji}
+								style={styles.emojiButton}
+								onPress={() => handleReaction(emoji)}
+							>
+								<Text style={styles.emojiButtonText}>{emoji}</Text>
+							</TouchableOpacity>
+						))}
+					</View>
+				</TouchableOpacity>
+			</Modal>
 
 		{/* Lightbox Modal */}
 		{message.type === 'image' && message.mediaUrl && (
@@ -142,7 +287,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 				</TouchableOpacity>
 			</Modal>
 		)}
-		</View>
+		</Animated.View>
 	);
 });
 
@@ -229,6 +374,68 @@ const styles = StyleSheet.create({
 	lightboxImage: {
 		width: Dimensions.get('window').width,
 		height: Dimensions.get('window').height,
+	},
+	reactionsContainer: {
+		flexDirection: 'row',
+		flexWrap: 'wrap',
+		marginTop: 4,
+		marginLeft: 12,
+		gap: 6,
+	},
+	reactionBubble: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		backgroundColor: '#f0f0f0',
+		borderRadius: 12,
+		paddingHorizontal: 8,
+		paddingVertical: 4,
+		gap: 4,
+		borderWidth: 1,
+		borderColor: '#e0e0e0',
+	},
+	reactionBubbleActive: {
+		backgroundColor: '#e3f2fd',
+		borderColor: '#2196F3',
+	},
+	reactionEmoji: {
+		fontSize: 14,
+	},
+	reactionCount: {
+		fontSize: 12,
+		fontWeight: '600',
+		color: '#666',
+	},
+	reactionCountActive: {
+		color: '#2196F3',
+	},
+	emojiPickerOverlay: {
+		flex: 1,
+		backgroundColor: 'rgba(0,0,0,0.4)',
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
+	emojiPickerContainer: {
+		backgroundColor: '#fff',
+		borderRadius: 16,
+		padding: 16,
+		flexDirection: 'row',
+		gap: 12,
+		shadowColor: '#000',
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.25,
+		shadowRadius: 4,
+		elevation: 5,
+	},
+	emojiButton: {
+		width: 50,
+		height: 50,
+		justifyContent: 'center',
+		alignItems: 'center',
+		backgroundColor: '#f8f8f8',
+		borderRadius: 25,
+	},
+	emojiButtonText: {
+		fontSize: 28,
 	},
 });
 

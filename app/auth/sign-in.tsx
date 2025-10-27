@@ -53,6 +53,7 @@ export default function SignInScreen() {
 				<TextInput
 					style={styles.input}
 					placeholder="Email"
+					placeholderTextColor="#999"
 					value={email}
 					onChangeText={setEmail}
 					autoCapitalize="none"
@@ -64,6 +65,7 @@ export default function SignInScreen() {
 				<TextInput
 					style={styles.input}
 					placeholder="Password"
+					placeholderTextColor="#999"
 					value={password}
 					onChangeText={setPassword}
 					secureTextEntry
@@ -109,6 +111,7 @@ const styles = StyleSheet.create({
 		fontWeight: 'bold',
 		marginBottom: 8,
 		textAlign: 'center',
+		color: '#000',
 	},
 	subtitle: {
 		fontSize: 16,
@@ -124,6 +127,8 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 16,
 		marginBottom: 16,
 		fontSize: 16,
+		color: '#000',
+		backgroundColor: '#fff',
 	},
 	button: {
 		height: 50,

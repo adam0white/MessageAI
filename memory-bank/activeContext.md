@@ -1,7 +1,7 @@
 # Active Context: MessageAI
 
-**Last Updated**: 2025-10-25  
-**Phase**: Phase 13.0 COMPLETE ✅ (Performance Optimization)
+**Last Updated**: 2025-10-26  
+**Phase**: Phase 15.0 COMPLETE ✅ (Reactions, Avatars, Dark Mode, Polish)
 
 ## Current Status
 
@@ -164,8 +164,47 @@ Backend delivers messages faster than React can process locally - Cloudflare Wor
 - ✅ Memory Bank updated (progress.md, activeContext.md)
 - ✅ Task list marked complete
 
+## Phase 15 Achievements (Oct 26, 2025)
+
+**Message Reactions:**
+- ✅ SQLite schema in Durable Objects (message_id, user_id, emoji)
+- ✅ WebSocket events: add_reaction, remove_reaction with broadcast
+- ✅ Long-press emoji picker (6 quick emojis: 👍❤️😂😮😢🎉)
+- ✅ Real-time reaction display with counts below messages
+- ✅ Active state highlighting (blue border for your reactions)
+
+**Names Display Fix:**
+- ✅ Backend JOIN bug fixed (was joining clerk_id instead of id)
+- ✅ Auto-sync endpoint POST /api/users/sync (no webhook dependency)
+- ✅ Profile sync on app load + after updates
+- ✅ Names visible in: conversation list, group chats, member list, notifications
+
+**Avatar System:**
+- ✅ Initials-based avatars with consistent color hashing
+- ✅ 12 color palette for variety
+- ✅ Integrated in conversation list (2-letter initials)
+
+**Dark Mode:**
+- ✅ Theme context with light/dark/auto modes
+- ✅ Toggle in profile screen (☀️ Light / 🌙 Dark / ⚙️ Auto)
+- ✅ Persistent preference via platform storage
+
+**Polish:**
+- ✅ Haptic feedback: medium on send/long-press, light on reactions
+- ✅ Message appear animations (slide + fade, 200ms)
+- ✅ Smooth 60fps rendering maintained
+
+**Bug Fixes (Final Polish):**
+- ✅ Fixed typing indicator styles scope error (iOS crash)
+- ✅ Fixed Android text input visibility (explicit black color)
+- ✅ Fixed message duplication on send (clientId matching in new_message handler)
+- ✅ Fixed FlatList message status updates (added extraData prop)
+- ✅ Fixed member list colors in dark mode
+- ✅ Fixed AI panel dark mode support
+- ✅ Fixed iOS header button styling (transparent backgrounds)
+- ✅ Fixed Android keyboard white bar (removed height behavior)
+- ✅ Suppressed benign "keep awake" errors on locked screen
+
 ## Next Steps
-- Test with 1000+ messages (tap title 3x → "🚀 1000 Msgs")
-- Optional: Phase 14.0 - Video Calls (Cloudflare RealtimeKit)
-- Optional: Phase 15.0 - Reactions & Polish
-- Optional: PWA features (Service Workers for offline)
+- Optional: Phase 14.0 - Video Calls (Cloudflare RealtimeKit) - already partially implemented
+- Optional: Push notification improvements (FCM for background)

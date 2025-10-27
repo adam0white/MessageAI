@@ -12,8 +12,11 @@ import {
 	Keyboard,
 	Modal,
 	Alert,
-	Image
+	Image,
+	Animated,
+	RefreshControl
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import * as PlatformImagePicker from '../../../lib/platform/imagePicker';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -30,8 +33,57 @@ import { useAuthStore } from '../../../lib/stores/auth';
 import { useNetworkStore } from '../../../lib/stores/network';
 import { insertMessage } from '../../../lib/db/queries';
 import { config } from '../../../lib/config';
+import { useTheme } from '../../../lib/contexts/ThemeContext';
 
 const WORKER_URL = config.workerUrl;
+
+// Animated Typing Indicator Component
+function TypingIndicator({ text }: { text: string }) {
+	const dot1Anim = useRef(new Animated.Value(0)).current;
+	const dot2Anim = useRef(new Animated.Value(0)).current;
+	const dot3Anim = useRef(new Animated.Value(0)).current;
+
+	useEffect(() => {
+		const createBounce = (anim: Animated.Value, delay: number) => {
+			return Animated.loop(
+				Animated.sequence([
+					Animated.delay(delay),
+					Animated.timing(anim, {
+						toValue: -8,
+						duration: 400,
+						useNativeDriver: true,
+					}),
+					Animated.timing(anim, {
+						toValue: 0,
+						duration: 400,
+						useNativeDriver: true,
+					}),
+				])
+			);
+		};
+
+		const animation = Animated.parallel([
+			createBounce(dot1Anim, 0),
+			createBounce(dot2Anim, 150),
+			createBounce(dot3Anim, 300),
+		]);
+
+		animation.start();
+
+		return () => animation.stop();
+	}, []);
+
+	return (
+		<View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#f8f9fa', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+			<Text style={{ fontSize: 13, color: '#666', fontStyle: 'italic' }}>{text}</Text>
+			<View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+				<Animated.View style={[{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#007AFF' }, { transform: [{ translateY: dot1Anim }] }]} />
+				<Animated.View style={[{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#007AFF' }, { transform: [{ translateY: dot2Anim }] }]} />
+				<Animated.View style={[{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#007AFF' }, { transform: [{ translateY: dot3Anim }] }]} />
+			</View>
+		</View>
+	);
+}
 
 type AiFeature = 'ask' | 'summarize' | 'actions' | 'priority' | 'decisions' | 'search' | 'planner';
 
@@ -90,6 +142,8 @@ export default function ChatScreen() {
 	const { getToken } = useAuth();
 	const { wsStatus } = useNetworkStore();
 	const db = useSQLiteContext();
+	const { colors } = useTheme();
+	const styles = getStyles(colors);
 	
 	const [inputText, setInputText] = useState('');
 	const [showAiInput, setShowAiInput] = useState(false);
@@ -100,6 +154,7 @@ export default function ChatScreen() {
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [selectedImage, setSelectedImage] = useState<string | null>(null);
 	const [isUploadingImage, setIsUploadingImage] = useState(false);
+	const [isStartingCall, setIsStartingCall] = useState(false);
 	
 	// Result states
 	const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null);
@@ -403,6 +458,7 @@ export default function ChatScreen() {
 		const trimmedText = inputText.trim();
 		if (!trimmedText) return;
 
+		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 		sendMessage({ content: trimmedText, type: 'text' });
 		setInputText('');
 		
@@ -858,8 +914,9 @@ export default function ChatScreen() {
 		<MessageBubble 
 			message={item} 
 			isGroupChat={isGroupChat}
+			conversationId={conversationId}
 		/>
-	), [isGroupChat]);
+	), [isGroupChat, conversationId]);
 
 	return (
 		<>
@@ -877,8 +934,12 @@ export default function ChatScreen() {
 				<View style={styles.headerRight}>
 				{Platform.OS !== 'web' && conversation && (
 					<TouchableOpacity 
+						disabled={isStartingCall}
 						onPress={async () => {
+							if (isStartingCall) return;
+							
 							try {
+								setIsStartingCall(true);
 								const token = await getToken();
 								
 								// Create participant list from conversation
@@ -924,11 +985,17 @@ export default function ChatScreen() {
 							} catch (error) {
 								console.error('Failed to start call:', error);
 								Alert.alert('Call Failed', error instanceof Error ? error.message : 'Unknown error');
+							} finally {
+								setIsStartingCall(false);
 							}
 						}}
-						style={[styles.aiButton, { marginRight: 6 }]}
+						style={[styles.aiButton, { marginRight: 6 }, isStartingCall && { opacity: 0.5 }]}
 					>
-						<Text style={styles.aiButtonText}>📹</Text>
+						{isStartingCall ? (
+							<ActivityIndicator size="small" color="#007AFF" />
+						) : (
+							<Text style={styles.aiButtonText}>📹</Text>
+						)}
 					</TouchableOpacity>
 				)}
 						<TouchableOpacity 
@@ -943,7 +1010,7 @@ export default function ChatScreen() {
 									onPress={() => setShowMemberList(true)}
 								>
 									<View style={styles.onlineIndicator} />
-									<Text style={[styles.onlineCount, { marginLeft: 6 }]}>{onlineCount} online</Text>
+									<Text style={[styles.onlineCount, { marginLeft: 4, fontSize: 11 }]}>{onlineCount}</Text>
 								</TouchableOpacity>
 							)}
 						</View>
@@ -952,7 +1019,7 @@ export default function ChatScreen() {
 			/>
 			
 			<KeyboardAvoidingView 
-				style={styles.container}
+				style={[styles.container, { backgroundColor: colors.background }]}
 				behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
 				keyboardVerticalOffset={90}
 			>
@@ -968,8 +1035,8 @@ export default function ChatScreen() {
 							</TouchableOpacity>
 						</View>
 						
-						{/* Debug Info */}
-						<View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 6, marginBottom: 10 }}>
+					{/* Debug Info */}
+					<View style={{ backgroundColor: colors.surface, padding: 8, borderRadius: 6, marginBottom: 10 }}>
 							<Text style={{ fontSize: 11, color: '#666', fontFamily: 'monospace' }}>
 								Conversation ID: {conversationId}
 							</Text>
@@ -1018,8 +1085,8 @@ export default function ChatScreen() {
 						</TouchableOpacity>
 					</View>
 					
-					{/* Performance Info */}
-					<View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 6, marginBottom: 8 }}>
+				{/* Performance Info */}
+				<View style={{ backgroundColor: colors.surface, padding: 8, borderRadius: 6, marginBottom: 8 }}>
 						<Text style={{ fontSize: 11, fontWeight: '600', color: '#333', marginBottom: 4 }}>
 							📊 Performance Optimizations
 						</Text>
@@ -1272,9 +1339,16 @@ export default function ChatScreen() {
 						inverted={Platform.OS !== 'web'}
 						keyExtractor={(item, index) => item.id || item.clientId || `msg_${index}`}
 						renderItem={renderMessage}
+						extraData={messages.map(m => `${m.id}-${m.status}`).join(',')}
 						contentContainerStyle={messages.length === 0 ? styles.emptyMessageList : styles.messageList}
-						onRefresh={refetch}
-						refreshing={isLoading}
+						refreshControl={
+							<RefreshControl
+								refreshing={isLoading}
+								onRefresh={refetch}
+								tintColor={colors.primary}
+								colors={[colors.primary]}
+							/>
+						}
 						onScroll={handleScroll}
 						scrollEventThrottle={16}
 						// Performance optimizations
@@ -1310,9 +1384,7 @@ export default function ChatScreen() {
 
 			{/* Typing Indicator */}
 			{typingUserIds.length > 0 && (
-				<View style={styles.typingIndicatorContainer}>
-					<Text style={styles.typingIndicatorText}>{getTypingText}</Text>
-				</View>
+				<TypingIndicator text={getTypingText} />
 			)}
 
 			{selectedImage && (
@@ -1406,7 +1478,8 @@ export default function ChatScreen() {
 								{conversation?.participants.map((participant) => {
 									const isOnline = onlineUserIds.includes(participant.userId);
 									const isCurrentUser = participant.userId === userId;
-									const displayName = participant.name || participant.userId.substring(0, 8);
+									// Handle both nested user.name and direct name field
+									const displayName = participant.user?.name || participant.name || participant.user?.email?.split('@')[0] || participant.userId.substring(0, 8);
 									const lastSeenAt = lastSeenData[participant.userId];
 
 									return (
@@ -1645,10 +1718,10 @@ export default function ChatScreen() {
 	);
 }
 
-const styles = StyleSheet.create({
+const getStyles = (colors: any) => StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: '#fff',
+		backgroundColor: colors.background,
 	},
 	flex: {
 		flex: 1,
@@ -1691,8 +1764,8 @@ const styles = StyleSheet.create({
 		padding: 12,
 		paddingBottom: Platform.OS === 'ios' ? 12 : 12,
 		borderTopWidth: 1,
-		borderTopColor: '#e4e6eb',
-		backgroundColor: '#fff',
+		borderTopColor: colors.border,
+		backgroundColor: colors.surface,
 		minHeight: 64,
 	},
 	input: {
@@ -1701,7 +1774,7 @@ const styles = StyleSheet.create({
 		maxHeight: 100,
 		paddingHorizontal: 16,
 		paddingVertical: 10,
-		backgroundColor: '#f0f2f5',
+		backgroundColor: colors.inputBackground,
 		borderRadius: 20,
 		fontSize: 16,
 		marginRight: 8,
@@ -1711,7 +1784,7 @@ const styles = StyleSheet.create({
 	sendButton: {
 		backgroundColor: '#0084ff',
 		paddingHorizontal: 20,
-		paddingVertical: 10,
+		height: 40,
 		borderRadius: 20,
 		justifyContent: 'center',
 		alignItems: 'center',
@@ -1768,7 +1841,7 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 	},
 	aiButton: {
-		backgroundColor: '#f0f0f0',
+		backgroundColor: Platform.OS === 'ios' ? 'transparent' : colors.surface,
 		paddingHorizontal: 10,
 		paddingVertical: 5,
 		borderRadius: 6,
@@ -1780,6 +1853,7 @@ const styles = StyleSheet.create({
 	aiButtonText: {
 		fontSize: 13,
 		fontWeight: '600',
+		color: colors.text,
 	},
 	onlineIndicator: {
 		width: 12,
@@ -1816,9 +1890,9 @@ const styles = StyleSheet.create({
 		padding: 12,
 	},
 	aiInputContainer: {
-		backgroundColor: '#f8f9fa',
+		backgroundColor: colors.surface,
 		borderBottomWidth: 1,
-		borderBottomColor: '#e0e0e0',
+		borderBottomColor: colors.border,
 		padding: 12,
 	},
 	aiInputHeader: {
@@ -1830,11 +1904,11 @@ const styles = StyleSheet.create({
 	aiInputTitle: {
 		fontSize: 14,
 		fontWeight: '600',
-		color: '#1a1a1a',
+		color: colors.text,
 	},
 	aiInputClose: {
 		fontSize: 20,
-		color: '#666',
+		color: colors.textSecondary,
 	},
 	aiProgressContainer: {
 		flexDirection: 'row',
@@ -2178,11 +2252,25 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 16,
 		paddingVertical: 8,
 		backgroundColor: '#f8f9fa',
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 8,
 	},
 	typingIndicatorText: {
 		fontSize: 13,
 		color: '#666',
 		fontStyle: 'italic',
+	},
+	dotsContainer: {
+		flexDirection: 'row',
+		gap: 4,
+		alignItems: 'center',
+	},
+	dot: {
+		width: 6,
+		height: 6,
+		borderRadius: 3,
+		backgroundColor: '#007AFF',
 	},
 	// Online Status Container
 	onlineStatusContainer: {
@@ -2200,7 +2288,7 @@ const styles = StyleSheet.create({
 		justifyContent: 'flex-end',
 	},
 	memberModalContent: {
-		backgroundColor: '#fff',
+		backgroundColor: colors.surface,
 		borderTopLeftRadius: 20,
 		borderTopRightRadius: 20,
 		paddingBottom: Platform.OS === 'ios' ? 40 : 20,
@@ -2218,7 +2306,7 @@ const styles = StyleSheet.create({
 	memberModalTitle: {
 		fontSize: 18,
 		fontWeight: '600',
-		color: '#000',
+		color: colors.text,
 	},
 	closeButton: {
 		width: 32,
@@ -2270,7 +2358,7 @@ const styles = StyleSheet.create({
 	memberName: {
 		fontSize: 16,
 		fontWeight: '500',
-		color: '#000',
+		color: colors.text,
 	},
 	memberStatusDot: {
 		width: 10,

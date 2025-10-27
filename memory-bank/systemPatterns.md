@@ -65,6 +65,23 @@
 8. DO broadcasts read receipt to all clients
 9. Sender updates UI: status: "read"
 
+### Message Deduplication Pattern
+**Problem**: When sender receives broadcast of their own message, could create duplicate.
+
+**Solution (3-layer defense)**:
+1. **Client ID Matching**: Backend includes `clientId` in `new_message` broadcast
+   - Frontend checks: `incomingMessage.clientId === localMessage.clientId`
+   - Prevents duplicate when receiving own message back
+2. **Server ID Checking**: Also check by server ID for messages from others
+   - `incomingMessage.id === existingMessage.id`
+3. **React Query Cache**: Use `setQueryData` only if message doesn't exist
+   - Check both ID and clientId before adding to cache
+4. **FlatList Re-rendering**: Add `extraData` prop tracking message IDs + status
+   - Forces FlatList to re-render when message status changes
+   - Example: `extraData={messages.map(m => \`${m.id}-${m.status}\`).join(',')}`
+
+**Critical**: Backend MUST send clientId with new_message events for sender's own messages.
+
 ### Local-First Storage Pattern
 - **SQLite is source of truth for UI** (instant reads)
 - **Durable Object is source of truth for sync** (persistent, consistent)
@@ -345,6 +362,66 @@ Simple JSON messages over WebSocket:
 - Returns: { messageId, content, sender, timestamp, relevanceScore, snippet }
 - UI shows relevance as percentage (score * 100)
 - Clickable results to jump to message
+
+### Message Reactions Pattern (Implemented ✅ - Phase 15.0)
+
+**Database Schema:**
+- Durable Object SQLite: `message_reactions` table
+- Composite primary key: (message_id, user_id, emoji)
+- Index on message_id for fast lookups
+
+**WebSocket Events:**
+- `add_reaction`: Client sends emoji + messageId
+- `remove_reaction`: Client sends emoji + messageId  
+- `reaction`: Server broadcasts to all participants
+
+**Display Pattern:**
+- Reactions grouped by emoji: { '👍': ['user1', 'user2'], '❤️': ['user3'] }
+- Shown below message with count badges
+- Active state: Blue border/text for user's own reactions
+- Tap to toggle on/off
+
+**UX Flow:**
+1. Long-press message (haptic medium)
+2. Emoji picker modal (6 quick emojis)
+3. Tap emoji (haptic light)
+4. Broadcast to all participants
+5. Real-time update on all devices
+
+### Avatar System Pattern (Implemented ✅ - Phase 15.0)
+
+**Initials Generation:**
+- Two words: First letter of first + last word (e.g., "John Doe" → "JD")
+- One word: First two letters (e.g., "Alice" → "AL")
+- Fallback: "?" for unknown users
+
+**Color Hashing:**
+- 12-color palette with consistent hash
+- Same name → same color across all instances
+- Hash algorithm: Sum char codes with bit shift
+
+**Usage:**
+- Conversation list avatars (50x50)
+- Member list modal (44x44)
+- Future: Message bubbles, profile screens
+
+### Dark Mode Pattern (Implemented ✅ - Phase 15.0)
+
+**Theme System:**
+- Three modes: light, dark, auto (follows system)
+- Theme context with colors object
+- Persistent via platform storage
+
+**Color Scheme:**
+- Light: White background, blue primary, black text
+- Dark: True black (#000), blue accent (#0A84FF), white text
+- 13 semantic color tokens (background, text, borders, etc.)
+
+**Implementation:**
+- ThemeProvider wraps entire app
+- useTheme() hook in components
+- Dynamic StyleSheet.create via getStyles(colors)
+- Toggle in profile screen
 
 ### Media Upload Pattern (Implemented ✅ - Phase 11.0)
 

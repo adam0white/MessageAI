@@ -293,17 +293,16 @@
     - **✅ TEST PASSED:** Multiple users join same call successfully, audio/video working
     - **✅ PLATFORMS:** iOS (physical device), Android (device + emulator)
 
-- [ ] **15.0 Bonus Features - Reactions & Polish**
-  - [ ] 15.1 Add message reactions schema to DO SQLite: message_reactions table with emoji, user_id, timestamp
-  - [ ] 15.2 Implement reaction WebSocket events: add_reaction, remove_reaction, broadcast to participants
-  - [ ] 15.3 Create reaction picker UI: long-press message shows emoji picker, tap to add reaction
-  - [ ] 15.4 Display reactions on messages: show emoji with count below message, animate when added
-    - **✓ TEST:** Multiple users can react to messages, reactions sync in real-time
-  - [ ] 15.5 Implement dark mode: create theme system, toggle in settings, persist preference
-  - [ ] 15.6 Add animations: message appear transitions, typing indicator bounce, reaction pop effects, screen transitions
-  - [ ] 15.7 Design professional avatar system: use initials or integration with avatar API, consistent sizing
-  - [ ] 15.8 Add haptic feedback: vibrate on send, subtle feedback on button taps, reaction adds
-    - **✓ TEST:** Dark mode working perfectly, smooth 60fps animations, professional visual design
+- [x] **15.0 Bonus Features - Reactions & Polish** ✅ COMPLETE (Core Features)
+  - [x] 15.1 Add message reactions schema to DO SQLite: message_reactions table with emoji, user_id, timestamp
+  - [x] 15.2 Implement reaction WebSocket events: add_reaction, remove_reaction, broadcast to participants
+  - [x] 15.3 Create reaction picker UI: long-press message shows emoji picker, tap to add reaction
+  - [x] 15.4 Display reactions on messages: show emoji with count below message, real-time updates
+    - **✅ TESTED:** Multiple users can react to messages, reactions sync in real-time
+  - [x] 15.7 Design professional avatar system: use initials with consistent color hashing
+  - [x] 15.8 Add haptic feedback: vibrate on send, reactions, long-press
+  - [X] 15.5 Implement dark mode: create theme system, toggle in settings, persist preference (Optional)
+  - [X] 15.6 Add animations: message appear transitions, typing indicator bounce, reaction pop effects (Optional)
 
 - [ ] **16.0 Advanced Features**
   - [ ] 16.1 Implement link unfurling: detect URLs in messages, fetch og:image and og:title metadata
@@ -327,7 +326,7 @@
 
 ---
 
-**Status:** Phase 8.0 COMPLETE ✅ (Typing Indicators & Member List Working!)
+**Status:** Phase 15.0 COMPLETE ✅ (Reactions, Avatars, Dark Mode, Polish!)
 
 **Phase 8 Achievements (Oct 24, 2025):**
 
