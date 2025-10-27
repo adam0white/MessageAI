@@ -28,7 +28,7 @@ export default function ConversationListScreen() {
 	const [participantIds, setParticipantIds] = useState<string>(''); // Comma-separated user IDs
 
 	async function handleDeleteConversation(conversationId: string, conversationName: string) {
-		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+		try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
 		
 		Alert.alert(
 			'Delete Conversation',

@@ -498,7 +498,7 @@ export default function ChatScreen() {
 		const trimmedText = inputText.trim();
 		if (!trimmedText) return;
 
-		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+		try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
 		sendMessage({ content: trimmedText, type: 'text' });
 		setInputText('');
 		

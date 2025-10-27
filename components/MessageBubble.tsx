@@ -139,7 +139,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 	const handleReaction = (emoji: string) => {
 		if (!userId || !conversationId) return;
 		
-		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+		try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
 		
 		// Check if user already reacted with this emoji
 		const userReacted = message.reactions?.[emoji]?.includes(userId);
@@ -156,7 +156,7 @@ export const MessageBubble = React.memo(function MessageBubble({ message, isGrou
 
 	// Handle long press - show either emoji picker or delete menu
 	const handleLongPress = () => {
-		Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+		try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
 		
 		if (conversationId && !isOwnMessage) {
 			// Others' messages: show emoji picker

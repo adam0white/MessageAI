@@ -36,7 +36,7 @@ cd worker && npm run deploy  # Backend (Cloudflare)
 - ✅ **Android** - APK or Google Play
 - ✅ **Web** - Chrome, Firefox, Safari (desktop & mobile)
 
-See [WEB-SUPPORT-GUIDE.md](./WEB-SUPPORT-GUIDE.md) for web-specific setup and deployment.
+**Web deployment:** `npm run web:deploy` (serves static assets from Worker)
 
 ## 🤖 AI Features for Remote Teams
 
@@ -65,20 +65,137 @@ All AI runs on Cloudflare Workers AI + Vectorize - no external services, sub-100
 
 ## 🏗️ Architecture
 
-```
-[React Native + SQLite]  ← Local-first (instant reads, optimistic writes)
-         ↕ WebSocket
-[Cloudflare Worker]      ← Routes to Durable Objects, handles REST
-         ↕ RPC
-[Durable Object]         ← One per conversation (WebSocket hibernation)
-    ├─ SQLite           ← Messages, read receipts, agent state
-    ├─ Workers AI       ← LLM inference (Qwen 1.5 14B, Llama 3.1 8B)
-    └─ Vectorize        ← Embeddings (bge-base-en-v1.5, 768D)
+### System Flow
 
-Worker also uses:
-├─ D1 (User profiles, conversation metadata)
-├─ AI Gateway (aw-cf-ai - tracking, caching)
-└─ Clerk (Auth webhooks)
+```mermaid
+graph TB
+    subgraph "Client (React Native)"
+        UI[UI Components]
+        SQLite[(SQLite DB)]
+        WSClient[WebSocket Client]
+        ReactQuery[React Query Cache]
+    end
+
+    subgraph "Cloudflare Edge"
+        Worker[Worker Entry Point]
+        
+        subgraph "Per-Conversation Isolation"
+            DO[Durable Object]
+            DOSQL[(DO SQLite)]
+            WSConn[WebSocket Connections]
+        end
+        
+        D1[(D1 Database)]
+        R2[(R2 Storage)]
+        Vectorize[(Vectorize Index)]
+        WorkersAI[Workers AI]
+        AIGateway[AI Gateway]
+    end
+    
+    Clerk[Clerk Auth]
+    
+    %% Client connections
+    UI --> SQLite
+    UI --> ReactQuery
+    UI --> WSClient
+    
+    %% WebSocket flow
+    WSClient <-->|WebSocket| Worker
+    Worker -->|Route by conv ID| DO
+    DO <--> WSConn
+    DO <--> DOSQL
+    
+    %% REST API flow
+    UI -->|REST API| Worker
+    Worker <--> D1
+    Worker <--> R2
+    
+    %% AI flow
+    DO -->|Embeddings| Vectorize
+    DO -->|LLM inference| WorkersAI
+    Worker --> AIGateway
+    AIGateway --> WorkersAI
+    
+    %% Auth flow
+    UI <-->|OAuth| Clerk
+    Clerk -->|Webhooks| Worker
+    Worker -->|Store user| D1
+    
+    %% Offline sync
+    SQLite -.->|On reconnect| WSClient
+    ReactQuery -.->|Invalidate| SQLite
+
+    style DO fill:#f9a825
+    style DOSQL fill:#fb8c00
+    style SQLite fill:#26a69a
+    style WorkersAI fill:#5c6bc0
+    style Vectorize fill:#7e57c2
+```
+
+### Message Flow (Real-Time)
+
+```mermaid
+sequenceDiagram
+    participant User1
+    participant SQLite1 as SQLite (User1)
+    participant WS1 as WebSocket
+    participant DO as Durable Object
+    participant WS2 as WebSocket
+    participant SQLite2 as SQLite (User2)
+    participant User2
+
+    User1->>SQLite1: Save message (optimistic)
+    SQLite1->>User1: Show message instantly
+    
+    User1->>WS1: Send message
+    WS1->>DO: Persist to DO SQLite
+    DO->>DO: Store message
+    
+    DO->>WS1: Confirm (sent ✓)
+    WS1->>SQLite1: Update status
+    SQLite1->>User1: Show sent ✓
+    
+    DO->>WS2: Broadcast to User2
+    WS2->>SQLite2: Save message
+    SQLite2->>User2: Show new message
+    
+    User2->>WS2: Send read receipt
+    WS2->>DO: Mark as read
+    DO->>WS1: Broadcast receipt
+    WS1->>SQLite1: Update status
+    SQLite1->>User1: Show read ✓✓
+```
+
+### AI Pipeline (RAG)
+
+```mermaid
+graph LR
+    subgraph "User Action"
+        Q[User asks question]
+    end
+    
+    subgraph "Preparation"
+        Q --> Fetch[Fetch messages]
+        Fetch --> Batch[Batch into groups of 5]
+        Batch --> Embed[Generate embeddings]
+        Embed -->|300ms delay| Vec[Store in Vectorize]
+    end
+    
+    subgraph "Query"
+        Vec --> Search[Semantic search top-5]
+        Fetch --> Recent[Get last 10 messages]
+        Search --> Merge[Merge context]
+        Recent --> Merge
+        Merge --> Prompt[Build prompt]
+    end
+    
+    subgraph "Response"
+        Prompt --> LLM[Workers AI<br/>Qwen 1.5 14B]
+        LLM --> Gateway[AI Gateway<br/>Metadata tracking]
+        Gateway --> StreamResponse[Stream response]
+        StreamResponse --> Save[Save as message]
+        Save --> Broadcast[Broadcast to users]
+    end
 ```
 
 **Key Patterns:**
@@ -129,11 +246,9 @@ messageAI/
 
 ## 📚 Documentation
 
-- **[SETUP-QUICK.md](./SETUP-QUICK.md)** - Fast setup guide (~15 min to deploy)
-- **[WEB-SUPPORT-GUIDE.md](./WEB-SUPPORT-GUIDE.md)** - Web platform setup, testing, and deployment
-- **[DEMO-ANGLES.md](./DEMO-ANGLES.md)** - Interesting talking points for demos
-- **[TECH-TALKING-POINTS.md](./TECH-TALKING-POINTS.md)** - Technical decisions explained
-- **[memory-bank/](./memory-bank/)** - Architecture, patterns, learnings (Memory Bank system)
+- **[SETUP-QUICK.md](./SETUP-QUICK.md)** - Setup guide (~15 min to deploy)
+- **[DEMO-ANGLES.md](./DEMO-ANGLES.md)** - Demo talking points
+- **[memory-bank/](./memory-bank/)** - Architecture, patterns, learnings
 
 ## 💡 Development Highlights
 

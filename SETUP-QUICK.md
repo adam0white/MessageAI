@@ -109,44 +109,150 @@ npx wrangler d1 execute messageai-db --remote --file=src/db/migrations/0003_add_
 
 ## Running Locally
 
+### Backend (Already Deployed):
+Backend is already live at `https://message.adamwhite.work`
+
+**For your own deployment:**
+```bash
+cd worker
+npm install
+# Create D1 database and Vectorize index
+# Run migrations
+# Update wrangler.jsonc with your database_id
+npm run deploy
+```
+
 ### Frontend:
 ```bash
 npm install
+# Update lib/config.ts with Clerk key
 npm start
 # Scan QR with Expo Go
 ```
 
-### Backend:
+### Local Development Workflow:
+
+**Web (fastest iteration):**
 ```bash
-cd worker
-npm install
-npm run dev  # Local on :8787
+npm run web  # Opens http://localhost:8081
+```
+- ✅ Fast refresh, Chrome DevTools
+- ✅ Works with deployed backend
+- ⚠️ Some features behave differently (notifications)
+
+**iOS Simulator:**
+```bash
+npm start
+# Press 'i' for iOS simulator
+```
+- ✅ Full native features
+- ⚠️ Haptics don't work (only on physical device)
+- ⚠️ Video calls may be unstable
+
+**Android Emulator:**
+```bash
+npm start
+# Press 'a' for Android emulator
 ```
 
-**Important:** Expo Go on phone can't reach `localhost:8787`. Either:
-- Deploy worker first: `npm run deploy`
-- Use ngrok to tunnel local worker
-- Update `lib/config.ts` workerUrl to deployed URL
+**Physical Device (recommended):**
+```bash
+npm start
+# Scan QR with Expo Go app
+```
+- ✅ All features work correctly
+- ✅ Real performance testing
+- ✅ Push notifications work
 
 ---
 
 ## Deployment
 
-### Backend:
+### Backend (Cloudflare Workers):
 ```bash
 cd worker
+
+# Deploy to production
 npm run deploy
+
+# Output: Deployment URL
+# Example: https://messageai-worker.YOUR_NAME.workers.dev
 ```
 
-Copy the deployed URL → update `lib/config.ts`
+**Custom Domain (optional):**
+1. Cloudflare Dashboard → Workers & Pages → Your Worker → Settings → Domains & Routes
+2. Add custom domain (e.g., `message.example.com`)
+3. Update `worker/wrangler.jsonc`:
+```json
+"routes": [
+  { "pattern": "message.example.com", "custom_domain": true }
+],
+"workers_dev": false
+```
 
-### Frontend:
-Already deployed via Expo Go (no build needed for testing)
+### Frontend (Expo):
 
-For production builds:
+**Option 1: Expo Go (Development/Testing)**
 ```bash
-eas build --platform android  # or ios
+npm start
+# Share QR code link with testers
 ```
+- ✅ No build needed
+- ✅ Instant updates
+- ⚠️ Development build only
+- ⚠️ Clerk dev keys work
+
+**Option 2: Development Build**
+```bash
+npx expo install expo-dev-client
+eas build --profile development --platform ios
+```
+- ✅ Native modules included
+- ✅ Better debugging
+
+**Option 3: Production Build (iOS)**
+```bash
+# Install EAS CLI
+npm install -g eas-cli
+
+# Login to Expo
+eas login
+
+# Configure
+eas build:configure
+
+# Build for iOS
+eas build --platform ios --profile production
+
+# Submit to TestFlight
+eas submit --platform ios
+```
+
+**Option 4: Production Build (Android)**
+```bash
+# APK (direct install)
+eas build --platform android --profile production
+
+# Download .apk from build output
+# Share APK file with users
+```
+
+**Option 5: Web Deployment**
+```bash
+# Build and deploy (web assets served from Worker)
+npm run web:deploy
+
+# Output: https://message.adamwhite.work (same domain as backend)
+```
+
+### Production Checklist:
+- [ ] Update `lib/config.ts` → Set `IS_PRODUCTION = true`
+- [ ] Replace Clerk test key with production key (`pk_live_...`)
+- [ ] Verify `workerUrl` points to production worker
+- [ ] Test on multiple devices
+- [ ] Enable Clerk production mode (Settings → Environment)
+- [ ] Set up Clerk webhook to production URL
+- [ ] Monitor usage in Cloudflare Dashboard
 
 ---
 
@@ -188,6 +294,184 @@ eas build --platform android  # or ios
 5. 🚀 Deploy worker
 
 **That's it.** No .env files, no complex config, no external services.
+
+---
+
+## Testing Your Deployment
+
+### 1. Backend Health Check:
+```bash
+# Test REST API
+curl https://your-worker-url.com/api/conversations?userId=test
+
+# Should return: {"conversations": []}
+```
+
+### 2. WebSocket Test:
+```bash
+# Install wscat
+npm install -g wscat
+
+# Connect to WebSocket
+wscat -c wss://your-worker-url.com/api/ws/test-conv-id
+
+# Should see: Connected message
+```
+
+### 3. Frontend Testing:
+- Sign up with email
+- Create conversation (use your own user ID for self-chat)
+- Send message
+- Force-quit app → reopen → messages persist
+- Enable airplane mode → send message → disable → message syncs
+
+### 4. Multi-Device Testing:
+- Two phones with Expo Go
+- Sign up as different users on each
+- Create conversation with other user's ID
+- Messages appear in real-time on both devices
+
+---
+
+## Environment Setup
+
+### Node.js Version:
+```bash
+node --version  # Should be 18+
+```
+
+If using nvm:
+```bash
+nvm install 18
+nvm use 18
+```
+
+### Expo CLI:
+```bash
+npm install -g expo-cli
+npx expo --version
+```
+
+### Wrangler (Cloudflare CLI):
+```bash
+npm install -g wrangler
+wrangler --version
+```
+
+### Cloudflare Login:
+```bash
+cd worker
+npx wrangler login
+# Opens browser to authenticate
+```
+
+### EAS CLI (for production builds):
+```bash
+npm install -g eas-cli
+eas login
+```
+
+---
+
+## Development Best Practices
+
+### 1. Use Production Backend for Testing:
+- Local worker development is complex (R2, D1, Vectorize)
+- Deploy backend early, iterate on frontend
+- Backend changes rarely break frontend
+
+### 2. Web for Rapid Iteration:
+```bash
+npm run web
+```
+- Instant refresh
+- Chrome DevTools
+- Test UI changes quickly
+
+### 3. Physical Device for Final Testing:
+- Expo Go on real phone
+- Test WebSocket reconnection (airplane mode)
+- Test haptics, camera, notifications
+
+### 4. Clear Caches When Stuck:
+```bash
+# Frontend
+rm -rf node_modules .expo
+npm install
+
+# Backend
+cd worker && rm -rf node_modules dist && npm install
+```
+
+### 5. Monitor Cloudflare Dashboard:
+- Workers & Pages → Your Worker → Analytics
+- Check request count, errors, latency
+- Durable Objects → See active instances
+
+### 6. Version Control:
+```bash
+# Before making changes
+git checkout -b feature/your-feature
+
+# After testing
+git add .
+git commit -m "feat: description"
+git push origin feature/your-feature
+```
+
+---
+
+## Troubleshooting
+
+### "Cannot connect to WebSocket"
+**Cause:** workerUrl incorrect or backend not deployed  
+**Fix:** 
+```bash
+cd worker && npm run deploy
+# Copy URL to lib/config.ts
+```
+
+### "Clerk authentication failed"
+**Cause:** Publishable key mismatch  
+**Fix:** Verify key in Clerk Dashboard → API Keys
+
+### "Messages not persisting"
+**Cause:** D1 migrations not run  
+**Fix:** Run all migration files (see Database Migrations section)
+
+### "AI features returning errors"
+**Cause:** Workers AI binding missing or Vectorize not created  
+**Fix:**
+```bash
+npx wrangler vectorize list  # Check if index exists
+# Check wrangler.jsonc has ai and vectorize bindings
+```
+
+### "Video calls not working"
+**Cause:** RealtimeKit credentials not configured  
+**Fix:** Check `worker/wrangler.jsonc` has REALTIMEKIT_ORG_ID and REALTIMEKIT_API_KEY
+
+### "Build failed" (EAS)
+**Cause:** Multiple reasons  
+**Fix:**
+```bash
+# Clear Expo cache
+npx expo start -c
+
+# Check eas.json configuration
+# Ensure Apple Developer account connected (for iOS)
+```
+
+### "Network request failed" on physical device
+**Cause:** HTTPS required for WebSocket on real devices  
+**Fix:** Deploy backend (workers.dev URLs have HTTPS by default)
+
+### Duplicate messages appearing
+**Cause:** Local SQLite + WebSocket race condition  
+**Fix:** Already handled in code via deduplication. If persists:
+```bash
+# Clear app data or reinstall
+```
 
 ---
 
