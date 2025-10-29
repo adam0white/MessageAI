@@ -69,16 +69,28 @@ export async function handleGetConversations(
 ): Promise<Response> {
 	try {
 		const url = new URL(request.url);
-		const userId = url.searchParams.get('userId');
+		const clerkId = url.searchParams.get('userId'); // This is actually the Clerk ID from frontend
 
-		if (!userId) {
+		if (!clerkId) {
 			return new Response(
 				JSON.stringify({ error: 'userId query parameter required' }),
 				{ status: 400, headers: { 'Content-Type': 'application/json' } }
 			);
 		}
 
-		const conversations = await getConversations(env.DB, userId);
+		// Convert Clerk ID to database ID
+		const { getUserByClerkId } = await import('../db/schema');
+		const user = await getUserByClerkId(env.DB, clerkId);
+		
+		if (!user) {
+			// User not found - return empty conversations list (they might not be synced yet)
+			return new Response(
+				JSON.stringify({ conversations: [] }),
+				{ headers: { 'Content-Type': 'application/json' } }
+			);
+		}
+
+		const conversations = await getConversations(env.DB, user.id);
 
 		return new Response(
 			JSON.stringify({ conversations }),

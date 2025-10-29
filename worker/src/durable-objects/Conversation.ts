@@ -2871,9 +2871,10 @@ Generate realistic venue names (no fake addresses).`;
 	 */
 	private async getUserInfo(userId: string): Promise<{ name?: string } | null> {
 		try {
+			// userId might be Clerk ID (from session) or database ID
 			const result = await this.env.DB
-				.prepare('SELECT name FROM users WHERE id = ?')
-				.bind(userId)
+				.prepare('SELECT name FROM users WHERE id = ? OR clerk_id = ?')
+				.bind(userId, userId)
 				.first<{ name: string | null }>();
 			
 			return result ? { name: result.name || undefined } : null;

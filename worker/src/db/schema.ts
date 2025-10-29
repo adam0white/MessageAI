@@ -427,9 +427,16 @@ export async function getPushTokensByUserId(
 	db: D1Database,
 	userId: string
 ): Promise<Array<{ token: string; platform: string }>> {
+	// userId might be Clerk ID (from DO sessions) or database ID
+	// Try both: first check if it's a database ID, then try as Clerk ID
 	const result = await db
-		.prepare('SELECT token, platform FROM push_tokens WHERE user_id = ?')
-		.bind(userId)
+		.prepare(`
+			SELECT pt.token, pt.platform 
+			FROM push_tokens pt
+			INNER JOIN users u ON pt.user_id = u.id
+			WHERE u.id = ? OR u.clerk_id = ?
+		`)
+		.bind(userId, userId)
 		.all<{ token: string; platform: string }>();
 
 	return result.results || [];

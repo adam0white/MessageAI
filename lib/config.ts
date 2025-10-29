@@ -5,7 +5,7 @@
 
 export const config = {
 	// Clerk Authentication
-	clerkPublishableKey: 'pk_test_YWR2YW5jZWQtdGFoci01OS5jbGVyay5hY2NvdW50cy5kZXYk',
+	clerkPublishableKey: 'pk_live_Y2xlcmsubWVzc2FnZS5hZGFtd2hpdGUud29yayQ',
 	
 	// Backend API
 	workerUrl: 'https://message.adamwhite.work',

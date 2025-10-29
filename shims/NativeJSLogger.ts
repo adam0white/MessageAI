@@ -5,20 +5,22 @@
  * tries to import it. We provide a compatible shim to prevent crashes.
  */
 
-console.log('🔧 NativeJSLogger shim loaded!');
-
-export default {
-  addListener: (eventName: string, handler: (event: any) => void) => {
-    console.log('🔧 NativeJSLogger.addListener called:', eventName);
+// Module with methods directly exported
+const NativeJSLogger = {
+  addListener: (eventName: string, handler?: (event: any) => void) => {
     // Return a subscription object that matches EventEmitter signature
     return {
       remove: () => {
-        console.log('🔧 NativeJSLogger subscription removed');
+        // No-op
       }
     };
   },
   removeListeners: (count: number) => {
-    console.log('🔧 NativeJSLogger.removeListeners called:', count);
+    // No-op
   }
 };
+
+// Export both as default and named to cover all import scenarios
+export default NativeJSLogger;
+export { NativeJSLogger };
 

@@ -155,10 +155,18 @@ export async function getConversationPreviews(
 	const params: any[] = [];
 	
 	if (currentUserId) {
+		// IMPORTANT: currentUserId might be Clerk ID, but conversation_participants stores database IDs
+		// First, try to get the database ID from the users table
+		const user = await db.getFirstAsync<{ id: string }>(
+			'SELECT id FROM users WHERE clerk_id = ? OR id = ?',
+			[currentUserId, currentUserId]
+		);
+		const dbUserId = user?.id || currentUserId;
+		
 		query += `
 			INNER JOIN conversation_participants cp ON c.id = cp.conversation_id
 			WHERE cp.user_id = ?`;
-		params.push(currentUserId);
+		params.push(dbUserId);
 	}
 	
 	query += ` ORDER BY c.last_message_at DESC NULLS LAST`;

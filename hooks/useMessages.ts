@@ -180,15 +180,6 @@ export function useMessages(conversationId: string) {
 				} else if (message.type === 'new_message') {
 					const incomingMessage = message.message;
 
-					console.log('useMessages: new_message received', {
-						id: incomingMessage.id,
-						clientId: incomingMessage.clientId,
-						senderId: incomingMessage.senderId,
-						content: incomingMessage.content.substring(0, 50),
-						conversationId: incomingMessage.conversationId,
-						isFromCurrentUser: incomingMessage.senderId === userId
-					});
-
 					if (incomingMessage.conversationId === conversationId) {
 						// Check if this is our own message coming back (has clientId matching)
 						const currentMessages = queryClient.getQueryData<Message[]>(['messages', conversationId]) || [];
@@ -218,11 +209,6 @@ export function useMessages(conversationId: string) {
 						}
 
 						if (existingMessage) {
-							console.log('useMessages: Replacing existing message', {
-								existing: existingMessage ? { id: existingMessage.id, clientId: existingMessage.clientId, status: existingMessage.status } : null,
-								incoming: { id: incomingMessage.id, clientId: incomingMessage.clientId, status: incomingMessage.status }
-							});
-
 							// Message already exists - this is our own message coming back from server
 							// Replace it completely with server data
 							queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
@@ -287,11 +273,6 @@ export function useMessages(conversationId: string) {
 							);
 
 							if (potentialDuplicates.length > 0) {
-								console.log('useMessages: Found potential duplicate, replacing instead of adding', {
-									duplicates: potentialDuplicates.length,
-									incoming: incomingMessage.id,
-									existingIds: potentialDuplicates.map(m => m.id)
-								});
 
 								// Replace the first duplicate found
 								queryClient.setQueryData<Message[]>(['messages', conversationId], (old = []) => {
@@ -328,9 +309,6 @@ export function useMessages(conversationId: string) {
 									]
 								).catch(err => console.error('useMessages: Failed to upsert duplicate:', err));
 							} else {
-								// Completely new message from someone else
-								console.log('useMessages: Adding new message from other user', incomingMessage.id);
-
 								// Before adding, remove any exact duplicates (defensive)
 								const deduplicatedMessages = currentMessages.filter(msg =>
 									!(msg.senderId === incomingMessage.senderId &&
@@ -372,10 +350,6 @@ export function useMessages(conversationId: string) {
 					);
 
 					if (uniqueMessages.length !== finalMessages.length) {
-						console.log('useMessages: Removed duplicates in final safeguard', {
-							before: finalMessages.length,
-							after: uniqueMessages.length
-						});
 						queryClient.setQueryData<Message[]>(['messages', conversationId], uniqueMessages);
 					}
 				} else if (message.type === 'reaction') {

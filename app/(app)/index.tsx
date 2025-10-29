@@ -151,7 +151,7 @@ export default function ConversationListScreen() {
 	}
 
 	async function createConversation() {
-		if (!userId) {
+		if (!userId || !user?.emailAddresses[0]?.emailAddress) {
 			Alert.alert('Error', 'User not authenticated');
 			return;
 		}
@@ -163,46 +163,56 @@ export default function ConversationListScreen() {
 			: [];
 
 		try {
-			let userIds: string[] = [userId]; // Start with current user
+			// Always include current user's email to get their database ID
+			const currentUserEmail = user.emailAddresses[0].emailAddress.toLowerCase();
+			const allEmails = [currentUserEmail, ...emails];
 
-			if (emails.length > 0) {
-				// Look up user IDs by email
-				const response = await fetch(`${config.workerUrl}/api/users/lookup-by-email`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ emails }),
-				});
+			// Look up all user IDs by email (including current user)
+			const response = await fetch(`${config.workerUrl}/api/users/lookup-by-email`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ emails: allEmails }),
+			});
 
-				if (!response.ok) {
-					throw new Error('Failed to lookup users by email');
-				}
-
-				const data = await response.json() as { users: Record<string, string> };
-				const foundUserIds = Object.values(data.users);
-
-				if (foundUserIds.length === 0) {
-					Alert.alert('Error', 'No users found with those email addresses');
-					return;
-				}
-
-				if (foundUserIds.length < emails.length) {
-					const foundEmails = Object.keys(data.users);
-					const notFound = emails.filter(e => !foundEmails.includes(e));
-					Alert.alert(
-						'Warning',
-						`${notFound.length} email(s) not found: ${notFound.join(', ')}. Continue with ${foundUserIds.length} participant(s)?`,
-						[
-							{ text: 'Cancel', style: 'cancel' },
-							{ text: 'Continue', onPress: () => proceedWithCreation([...userIds, ...foundUserIds]) }
-						]
-					);
-					return;
-				}
-
-				userIds = [...userIds, ...foundUserIds];
+			if (!response.ok) {
+				throw new Error('Failed to lookup users by email');
 			}
 
-			await proceedWithCreation(userIds);
+			const data = await response.json() as { users: Record<string, string> };
+			
+			// Get current user's database ID
+			const currentUserDbId = data.users[currentUserEmail];
+			if (!currentUserDbId) {
+				Alert.alert('Error', 'Your profile is not synced yet. Please try again in a moment.');
+				return;
+			}
+
+			// Get other participants' database IDs
+			const otherUserIds = emails
+				.map(email => data.users[email])
+				.filter(id => id !== undefined);
+
+			// Check if any emails were not found
+			if (emails.length > 0 && otherUserIds.length === 0) {
+				Alert.alert('Error', 'No users found with those email addresses');
+				return;
+			}
+
+			if (emails.length > 0 && otherUserIds.length < emails.length) {
+				const foundEmails = Object.keys(data.users).filter(e => e !== currentUserEmail);
+				const notFound = emails.filter(e => !foundEmails.includes(e));
+				Alert.alert(
+					'Warning',
+					`${notFound.length} email(s) not found: ${notFound.join(', ')}. Continue with ${otherUserIds.length} participant(s)?`,
+					[
+						{ text: 'Cancel', style: 'cancel' },
+						{ text: 'Continue', onPress: () => proceedWithCreation([currentUserDbId, ...otherUserIds]) }
+					]
+				);
+				return;
+			}
+
+			await proceedWithCreation([currentUserDbId, ...otherUserIds]);
 		} catch (error) {
 			console.error('❌ Failed to create conversation:', error);
 			Alert.alert('Error', 'Failed to create conversation: ' + (error instanceof Error ? error.message : 'Unknown'));
